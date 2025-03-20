@@ -3,11 +3,13 @@ import torch.nn as nn
 import torch.optim as optim
 import os
 import numpy as np
+import json
+import time
 from scipy.signal import savgol_filter
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 
-def plot_learning_curve(num_epochs, train_losses, train_accuracies, test_accuracies):
+def plot_learning_curve(num_epochs, train_losses, train_accuracies, test_accuracies, save_path='./learning_curve.png'):
     def smooth_curve(values, window=5, poly=2):
         if len(values) < window:
             return values  # Not enough points to smooth
@@ -45,8 +47,8 @@ def plot_learning_curve(num_epochs, train_losses, train_accuracies, test_accurac
     plt.grid()
 
     plt.tight_layout()
-    plt.savefig('./learning_curve.png')
-    plt.show()
+    plt.savefig(save_path)
+    plt.close()  # Close the figure to free memory
 
 def analyze_experts(model, test_loader, device, num_classes=15):
     """Analyze the performance of each expert on different classes"""
@@ -126,6 +128,36 @@ def analyze_experts(model, test_loader, device, num_classes=15):
 
 def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100, 
                           lr=0.001, weight_decay=1e-4, patience=10, model_name="moe_combined"):
+    # Create a new directory for this training run
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    run_dir = os.path.join("runs", f"{model_name}_{timestamp}")
+    os.makedirs(run_dir, exist_ok=True)
+    
+    # Create subdirectories
+    models_dir = os.path.join(run_dir, "models")
+    os.makedirs(models_dir, exist_ok=True)
+    
+    # Save configuration to the run directory
+    config = {
+        "model_name": model_name,
+        "num_epochs": num_epochs,
+        "learning_rate": lr,
+        "weight_decay": weight_decay,
+        "patience": patience,
+        "num_experts": model.num_experts,
+        "num_classes": model.num_classes,
+        "timestamp": timestamp
+    }
+    
+    with open(os.path.join(run_dir, "config.json"), "w") as f:
+        json.dump(config, f, indent=4)
+    
+    # Create log file
+    log_file = os.path.join(run_dir, "training_log.txt")
+    with open(log_file, "w") as f:
+        f.write(f"Training started at {timestamp}\n")
+        f.write(f"Configuration: {json.dumps(config, indent=4)}\n\n")
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     
@@ -151,8 +183,35 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
     train_accuracies = []
     test_accuracies = []
     
+    # Print model parameters breakdown
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"Total parameters: {total_params:,}")
+    feature_params = sum(p.numel() for p in model.feature_extractor.parameters())
+    gating_params = sum(p.numel() for p in model.gating_network.parameters())
+    
+    print(f"\nModel Parameters Breakdown:")
+    print(f"Feature Extractor: {feature_params:,}")
+    print(f"Gating Network: {gating_params:,}")
+    print("Experts:")
+    expert_params = []
+    classifier_params = []
+    for i in range(model.num_experts):
+        expert_p = sum(p.numel() for p in model.experts[i].parameters())
+        classifier_p = sum(p.numel() for p in model.classifiers[i].parameters())
+        expert_params.append(expert_p)
+        classifier_params.append(classifier_p)
+        print(f"  Expert {i+1}: {expert_p:,} (Expert) + {classifier_p:,} (Classifier) = {expert_p + classifier_p:,}")
+    
+    print(f"\nTotal parameters: {total_params:,}")
+    
+    # Log parameters breakdown
+    with open(log_file, "a") as f:
+        f.write("\nModel Parameters Breakdown:\n")
+        f.write(f"Feature Extractor: {feature_params:,}\n")
+        f.write(f"Gating Network: {gating_params:,}\n")
+        f.write("Experts:\n")
+        for i in range(model.num_experts):
+            f.write(f"  Expert {i+1}: {expert_params[i]:,} (Expert) + {classifier_params[i]:,} (Classifier) = {expert_params[i] + classifier_params[i]:,}\n")
+        f.write(f"\nTotal parameters: {total_params:,}\n\n")
 
     # Mixed precision training
     scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
@@ -170,7 +229,8 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         # 跟踪每个专家的使用情况
         expert_usage = torch.zeros(model.num_experts).to(device)
         
-        for inputs, labels in train_loader:
+        from tqdm import tqdm
+        for inputs, labels in tqdm(train_loader):
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
             
@@ -207,18 +267,26 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
                    0.1 * correlation_loss +
                    0.5 * min_usage_loss)  # 添加最小使用率约束
             
-            loss.backward()
-            optimizer.step()
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
             
             running_loss += loss.item()
             _, predicted = torch.max(outputs.data, 1)
             total_train += labels.size(0)
             correct_train += (predicted == labels).sum().item()
         
-        # 打印专家使用情况
+        # Print expert usage to log only
         expert_usage = expert_usage / len(train_loader.dataset)
-        print(f"\nExpert usage ratios: {expert_usage.cpu().detach().numpy()}")
-        print(f"Current temperature: {current_temperature:.3f}")
+        expert_usage_info = f"Expert usage ratios: {expert_usage.cpu().detach().numpy()}"
+        temp_info = f"Current temperature: {current_temperature:.3f}"
+        with open(log_file, "a") as f:
+            f.write(f"\n{expert_usage_info}\n")
+            f.write(f"{temp_info}\n")
         
         scheduler.step()
         
@@ -230,8 +298,8 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         # Evaluate on test set
         model.eval()
         correct_test, total_test = 0, 0
-        class_correct = [0] * 15
-        class_total = [0] * 15
+        class_correct = [0] * model.num_classes
+        class_total = [0] * model.num_classes
         
         with torch.no_grad():
             for inputs, labels in test_loader:
@@ -252,36 +320,70 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         test_acc = 100.0 * correct_test / total_test
         test_accuracies.append(test_acc)
         
-        # Print per-class accuracy
-        print(f'Epoch {epoch+1}/{num_epochs}, Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%, Test Acc: {test_acc:.2f}%')
-        for i in range(15):
+        # Print concise epoch info to terminal
+        print(f'E{epoch+1:03d} Loss:{train_loss:.4f} Train:{train_acc:.2f}% Test:{test_acc:.2f}%')
+        
+        # Log detailed info to file
+        epoch_info = f'Epoch {epoch+1}/{num_epochs}, Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%, Test Acc: {test_acc:.2f}%'
+        with open(log_file, "a") as f:
+            f.write(f"{epoch_info}\n")
+        
+        # Log per-class accuracy to file only
+        for i in range(model.num_classes):
             if class_total[i] > 0:
-                print(f'Class {i} Accuracy: {100.0 * class_correct[i] / class_total[i]:.2f}%')
+                class_acc = 100.0 * class_correct[i] / class_total[i]
+                class_info = f'Class {i} Accuracy: {class_acc:.2f}%'
+                with open(log_file, "a") as f:
+                    f.write(f"{class_info}\n")
+        
+        # Update the learning curve
+        plot_learning_curve(epoch + 1, train_losses, train_accuracies, test_accuracies,
+                          save_path=os.path.join(run_dir, "learning_curve.png"))
         
         # Save checkpoint if test accuracy improved
         if test_acc > best_test_acc:
             patience_counter = 0
-            print(f"Test accuracy improved from {best_test_acc:.2f}% to {test_acc:.2f}%")
+            improvement_info = f"Test accuracy improved from {best_test_acc:.2f}% to {test_acc:.2f}%"
+            print(improvement_info)
+            with open(log_file, "a") as f:
+                f.write(f"{improvement_info}\n")
+            
             best_test_acc = test_acc
             
-            # Save model
-            save_path = f'./models/A/{model_name}_{test_acc:.2f}_epoch{epoch}.pth'
+            # Save best model in the run directory
+            # Remove previous best model if it exists
+            for old_file in os.listdir(models_dir):
+                if old_file.startswith("best_model_"):
+                    old_path = os.path.join(models_dir, old_file)
+                    os.remove(old_path)
+            
+            checkpoint_path = os.path.join(models_dir, f"best_model_{test_acc:.2f}_epoch{epoch}.pth")
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'accuracy': test_acc,
-            }, save_path)
-            print(f"Checkpoint saved to {save_path}")
+            }, checkpoint_path)
+            
+            checkpoint_info = f"Checkpoint saved to {checkpoint_path}"
+            with open(log_file, "a") as f:
+                f.write(f"{checkpoint_info}\n")
         else:
             patience_counter += 1
-            print(f"No improvement in test accuracy for {patience_counter} epochs")
+            patience_info = f"No improvement in test accuracy for {patience_counter} epochs"
+            with open(log_file, "a") as f:
+                f.write(f"{patience_info}\n")
             
             if patience_counter >= patience:
-                print(f"Early stopping after {patience} epochs without improvement")
+                early_stop_info = f"Early stopping after {patience} epochs without improvement"
+                print(early_stop_info)  # Print early stopping to terminal
+                with open(log_file, "a") as f:
+                    f.write(f"{early_stop_info}\n")
                 break
-
-    plot_learning_curve(epoch + 1, train_losses, train_accuracies, test_accuracies)
+        
+        # Add a separator between epochs in the log
+        with open(log_file, "a") as f:
+            f.write("\n" + "-"*50 + "\n\n")
 
     # 在训练结束后添加专家分析
     print("\nAnalyzing expert specialization...")
@@ -307,7 +409,28 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
     plt.title('Expert Contribution per Class')
     
     plt.tight_layout()
-    plt.savefig('./expert_analysis.png')
-    plt.show()
+    
+    # Save expert analysis to the run directory
+    plt.savefig(os.path.join(run_dir, "expert_analysis.png"))
+    plt.close()  # Close the figure to free memory
+    
+    # Save final training results
+    final_results = {
+        "best_accuracy": best_test_acc,
+        "total_epochs": epoch + 1,
+        "early_stopped": patience_counter >= patience,
+        "final_train_loss": train_losses[-1],
+        "final_train_accuracy": train_accuracies[-1],
+        "final_test_accuracy": test_accuracies[-1]
+    }
+    
+    with open(os.path.join(run_dir, "results.json"), "w") as f:
+        json.dump(final_results, f, indent=4)
+    
+    # Final log entry
+    with open(log_file, "a") as f:
+        f.write(f"\nTraining completed at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Best test accuracy: {best_test_acc:.2f}%\n")
+        f.write(f"Total epochs: {epoch + 1}\n")
 
     return best_test_acc 
