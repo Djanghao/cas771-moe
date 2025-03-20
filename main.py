@@ -9,11 +9,12 @@ import numpy as np
 import os
 import random
 from scipy.signal import savgol_filter
+import argparse
 
 # Import components from our custom modules
-from model import MoEModel
+from merge_model import MergedMoEModel
 from data_loader import load_all_datasets
-from train import train_and_evaluate_moe
+from train import train_and_evaluate_moe, plot_learning_curve
 
 class CAS771Dataset(Dataset):
     def __init__(self, data, labels, transform=None):
@@ -64,47 +65,6 @@ def calculate_normalization_stats(dataloader):
 
     return mean, std
 
-def plot_learning_curve(num_epochs, train_losses, train_accuracies, test_accuracies):
-    def smooth_curve(values, window=5, poly=2):
-        if len(values) < window:
-            return values  # Not enough points to smooth
-        return savgol_filter(values, window, poly)
-
-    epochs = range(1, num_epochs + 1)
-    
-    # Apply smoothing if enough data points
-    if len(train_losses) >= 5:
-        smoothed_train_losses = smooth_curve(train_losses)
-        smoothed_train_accuracies = smooth_curve(train_accuracies)
-        smoothed_test_accuracies = smooth_curve(test_accuracies)
-    else:
-        smoothed_train_losses = train_losses
-        smoothed_train_accuracies = train_accuracies
-        smoothed_test_accuracies = test_accuracies
-
-    plt.figure(figsize=(12, 6))
-
-    plt.subplot(1, 2, 1)
-    plt.plot(epochs, smoothed_train_losses, label='Training Loss', linestyle='-', linewidth=2, color='tab:red')
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.title('Training Loss Curve')
-    plt.legend()
-    plt.grid()
-
-    plt.subplot(1, 2, 2)
-    plt.plot(epochs, smoothed_train_accuracies, label='Training Accuracy', linestyle='-', linewidth=2, color='tab:blue')
-    plt.plot(epochs, smoothed_test_accuracies, label='Test Accuracy', linestyle='-', linewidth=2, color='tab:green')
-    plt.xlabel('Epochs')
-    plt.ylabel('Accuracy')
-    plt.title('Accuracy Curve')
-    plt.legend()
-    plt.grid()
-
-    plt.tight_layout()
-    plt.savefig('./learning_curve.png')
-    plt.show()
-
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -117,30 +77,63 @@ def set_seed(seed=42):
     print(f"Random seed set to: {seed}")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--num_experts", type=int, default=3, help="Number of experts in the MoE model")
+    parser.add_argument("--num_epochs", type=int, default=100, help="Number of epochs for training")
+    parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+    parser.add_argument("--weight_decay", type=float, default=1e-4, help="Weight decay")
+    parser.add_argument("--patience", type=int, default=20, help="Patience for early stopping")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
+    parser.add_argument("--seed", type=int, default=100, help="Random seed")
+    parser.add_argument("--model_name", type=str, default="merged_moe", help="Model name")
+    parser.add_argument("--submodels_dir", type=str, default="./submodels/A", help="Directory containing pretrained submodels")
+    parser.add_argument("--expert_analysis_interval", type=int, default=10, 
+                       help="Interval (in epochs) for saving expert analysis visualization (set to 0 to disable)")
+    
+    # MoE specific hyperparameters
+    parser.add_argument("--diversity_weight", type=float, default=0.1, 
+                       help="Controls diversity of expert specialization (range: 0.05-0.2)")
+    parser.add_argument("--balance_weight", type=float, default=0.5, 
+                       help="Controls load balancing between experts (range: 0.3-1.0)")
+    parser.add_argument("--initial_temperature", type=float, default=2.0, 
+                       help="Starting temperature for gating network (range: 1.5-4.0)")
+    parser.add_argument("--final_temperature", type=float, default=0.5, 
+                       help="Final temperature for gating network (range: 0.3-1.0)")
+    
+    # Parse arguments
+    args = parser.parse_args()
+    
     # Set random seed
-    set_seed(100)
+    set_seed(args.seed)
     
-    # Make sure output directory exists
-    os.makedirs("./models/A", exist_ok=True)
+    # Make sure output directories exist
+    os.makedirs("./runs", exist_ok=True)
     
-    # Load all datasets combined
-    train_loader, test_loader, num_classes = load_all_datasets(batch_size=32)
+    # Load all datasets combined (15 classes)
+    train_loader, test_loader, num_classes = load_all_datasets(batch_size=args.batch_size)
     print(f"Total classes: {num_classes}")
     
-    # Create MoE model
-    num_experts = 4  # You can experiment with different number of experts
-    model = MoEModel(num_classes=num_classes, num_experts=num_experts)
+    # Create MergedMoE model with fixed number of experts (3)
+    model = MergedMoEModel(num_classes=num_classes, num_experts=3)
+    
+    # Load and merge pretrained models
+    model.load_pretrained_models(args.submodels_dir)
     
     # Train model
     best_acc = train_and_evaluate_moe(
         model, 
         train_loader, 
         test_loader,
-        num_epochs=150,
-        lr=0.001,
-        weight_decay=1e-4,
-        patience=15,
-        model_name=f"moe_combined_{num_experts}experts"
+        num_epochs=args.num_epochs,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        patience=args.patience,
+        model_name=args.model_name,
+        expert_analysis_interval=args.expert_analysis_interval,
+        diversity_weight=args.diversity_weight,
+        balance_weight=args.balance_weight,
+        initial_temperature=args.initial_temperature,
+        final_temperature=args.final_temperature
     )
     
-    print(f"Training completed with best accuracy: {best_acc:.2f}%") 
+    print(f"Training completed with best accuracy: {best_acc:.2f}%")

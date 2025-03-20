@@ -2,3 +2,8 @@ __pycache__
 __pycache__/*
 models/*
 data/*
+best_models/*
+submodels/*
+
+runs/*
+!runs/README.md
