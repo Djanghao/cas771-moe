@@ -10,6 +10,15 @@ import matplotlib.pyplot as plt
 import torch.nn.functional as F
 
 def plot_learning_curve(num_epochs, train_losses, train_accuracies, test_accuracies, save_path='./learning_curve.png'):
+    """Plot and save learning curves for training and evaluation
+    
+    Args:
+        num_epochs: Number of epochs completed
+        train_losses: List of training losses
+        train_accuracies: List of training accuracies
+        test_accuracies: List of test accuracies
+        save_path: Path to save the plot
+    """
     def smooth_curve(values, window=5, poly=2):
         if len(values) < window:
             return values  # Not enough points to smooth
@@ -51,7 +60,18 @@ def plot_learning_curve(num_epochs, train_losses, train_accuracies, test_accurac
     plt.close()  # Close the figure to free memory
 
 def analyze_experts(model, test_loader, device, num_classes=15):
-    """Analyze the performance of each expert on different classes"""
+    """Analyze the performance of each expert on different classes
+    
+    Args:
+        model: The MoE model to analyze
+        test_loader: DataLoader for the test dataset
+        device: Device to perform computation on
+        num_classes: Number of classes in the dataset
+        
+    Returns:
+        expert_class_accuracy: Accuracy of each expert for each class
+        expert_avg_contributions: Average contribution of each expert for each class
+    """
     model.eval()
     
     # Initialize counters for each expert and class
@@ -59,7 +79,7 @@ def analyze_experts(model, test_loader, device, num_classes=15):
     expert_class_total = torch.zeros(model.num_experts, num_classes).to(device)
     expert_contributions = torch.zeros(model.num_experts, num_classes).to(device)
     
-    # 预先创建单位矩阵并移到正确的设备上
+    # Pre-create identity matrix and move to correct device
     eye_matrix = torch.eye(num_classes).to(device)
     
     with torch.no_grad():
@@ -68,7 +88,7 @@ def analyze_experts(model, test_loader, device, num_classes=15):
             batch_size = labels.size(0)
             
             # Get features and outputs
-            outputs, gates = model(inputs)  # 修改这里，接收两个返回值
+            outputs, gates = model(inputs)
             
             # Get individual expert outputs
             features = model.feature_extractor(inputs)
@@ -126,18 +146,106 @@ def analyze_experts(model, test_loader, device, num_classes=15):
     
     return expert_class_accuracy, expert_avg_contributions
 
+def plot_expert_analysis(expert_accuracies, expert_contributions, save_path):
+    """Create and save visualization of expert specialization
+    
+    Args:
+        expert_accuracies: Tensor of shape (num_experts, num_classes) with accuracy values
+        expert_contributions: Tensor of shape (num_experts, num_classes) with contribution values
+        save_path: Path to save the visualization
+    """
+    plt.figure(figsize=(15, 5))
+    
+    # Plot expert accuracies
+    plt.subplot(1, 2, 1)
+    im = plt.imshow(expert_accuracies.cpu().numpy(), cmap='YlOrRd', aspect='auto')
+    plt.colorbar(im, label='Accuracy (%)')
+    plt.xlabel('Class')
+    plt.ylabel('Expert')
+    plt.title('Expert Accuracy per Class')
+    
+    # Plot expert contributions
+    plt.subplot(1, 2, 2)
+    im = plt.imshow(expert_contributions.cpu().numpy(), cmap='YlOrRd', aspect='auto')
+    plt.colorbar(im, label='Average Contribution')
+    plt.xlabel('Class')
+    plt.ylabel('Expert')
+    plt.title('Expert Contribution per Class')
+    
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()  # Close the figure to free memory
+
 def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100, 
-                          lr=0.001, weight_decay=1e-4, patience=10, model_name="moe_combined"):
+                          lr=0.001, weight_decay=1e-4, patience=10, model_name="moe_combined",
+                          expert_analysis_interval=10, diversity_weight=0.1, balance_weight=0.5,
+                          initial_temperature=2.0, final_temperature=0.5):
+    """Train and evaluate a Mixture of Experts model
+    
+    Args:
+        model: The MoE model to train
+        train_loader: DataLoader for the training dataset
+        test_loader: DataLoader for the test dataset
+        num_epochs: Maximum number of training epochs
+        lr: Learning rate
+        weight_decay: Weight decay for regularization
+        patience: Patience for early stopping
+        model_name: Name of the model for saving
+        expert_analysis_interval: Interval (in epochs) to save expert analysis visualization
+        diversity_weight: Controls diversity of expert specialization (range: 0.05-0.2)
+        balance_weight: Controls load balancing between experts (range: 0.3-1.0)
+        initial_temperature: Starting temperature for gating network (range: 1.5-4.0)
+        final_temperature: Final temperature for gating network (range: 0.3-1.0)
+        
+    Returns:
+        best_test_acc: Best test accuracy achieved during training
+    """
     # Create a new directory for this training run
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     run_dir = os.path.join("runs", f"{model_name}_{timestamp}")
     os.makedirs(run_dir, exist_ok=True)
     
     # Create subdirectories
-    models_dir = os.path.join(run_dir, "models")
+    # models_dir = os.path.join(run_dir, "models")
+    models_dir = run_dir
     os.makedirs(models_dir, exist_ok=True)
     
-    # Save configuration to the run directory
+    # MoE Hyperparameter Details
+    # --------------------------
+    # These comments explain the hyperparameters that control different aspects of MoE training
+    # The actual values are now passed as function parameters from main.py
+    #
+    # diversity_weight: Controls the diversity of expert specialization 
+    # - Higher values (>0.2) encourage more diverse expert utilization but may reduce accuracy
+    # - Lower values (<0.05) allow experts to specialize more aggressively but may lead to expert collapse
+    # - Increase if experts show similar patterns in contribution plots
+    # - Decrease if overall accuracy is significantly impacted
+    # - Typical range: 0.05-0.2
+    #
+    # balance_weight: Controls load balancing between experts
+    # - Higher values (>0.5) enforce more equal expert utilization (important for distributed systems)
+    # - Lower values (<0.2) allow more uneven expert usage (may improve performance on imbalanced datasets)
+    # - Increase if one expert dominates and handles most classes
+    # - Decrease if experts show too much overlap in their specialization
+    # - Typical range: 0.3-1.0
+    # - Critical parameter: too low can cause expert collapse, too high can prevent specialization
+    #
+    # Temperature parameters control the "softness" of expert selection
+    # - Higher temperature = softer expert selection (multiple experts used per sample)
+    # - Lower temperature = harder expert selection (more winner-take-all)
+    #
+    # initial_temperature: Starting temperature for the gating network
+    # - Higher values (>2.0) ensure all experts are utilized early in training
+    # - Important to prevent early expert collapse
+    # - Typical range: 1.5-4.0 depending on dataset complexity
+    #
+    # final_temperature: Target temperature at the end of training
+    # - Lower values (<0.5) create more specialized experts
+    # - Higher values (>1.0) keep expert selection soft (useful for uncertain inputs)
+    # - Too low can make training unstable near the end
+    # - Typical range: 0.3-1.0
+    # - Set closer to initial_temperature for more consistent training
+    
     config = {
         "model_name": model_name,
         "num_epochs": num_epochs,
@@ -146,7 +254,12 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         "patience": patience,
         "num_experts": model.num_experts,
         "num_classes": model.num_classes,
-        "timestamp": timestamp
+        "timestamp": timestamp,
+        "expert_analysis_interval": expert_analysis_interval,
+        "diversity_weight": diversity_weight,
+        "balance_weight": balance_weight,
+        "initial_temperature": initial_temperature,
+        "final_temperature": final_temperature
     }
     
     with open(os.path.join(run_dir, "config.json"), "w") as f:
@@ -161,19 +274,14 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     
-    # 增加均衡损失的权重
-    diversity_weight = 0.1
-    balance_weight = 0.5  # 显著增加均衡损失的权重
-    
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     
-    # 使用余弦退火学习率调度器
+    # Use cosine annealing learning rate scheduler
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
     
-    # 动态调整门控网络的温度
-    initial_temperature = 2.0
-    final_temperature = 0.5
+    # Dynamically adjust gating network temperature
+    current_temperature = initial_temperature
     
     # Training loop
     best_test_acc = 0.0
@@ -214,7 +322,8 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         f.write(f"\nTotal parameters: {total_params:,}\n\n")
 
     # Mixed precision training
-    scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
+    # scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
+    scaler = None
 
     for epoch in range(num_epochs):
         model.train()
@@ -222,11 +331,11 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         correct_train = 0
         total_train = 0
         
-        # 更新温度
+        # Update temperature
         current_temperature = initial_temperature - (initial_temperature - final_temperature) * (epoch / num_epochs)
         model.gating_network.temperature = current_temperature
         
-        # 跟踪每个专家的使用情况
+        # Track usage of each expert
         expert_usage = torch.zeros(model.num_experts).to(device)
         
         from tqdm import tqdm
@@ -236,36 +345,36 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
             
             outputs, gates = model(inputs)
             
-            # 主分类损失
+            # Main classification loss
             classification_loss = criterion(outputs, labels)
             
-            # 专家分化损失
+            # Expert diversity loss
             diversity_loss = -(gates * torch.log(gates + 1e-6)).sum(1).mean()
             
-            # 负相关损失
+            # Negative correlation loss
             correlation_loss = torch.mean(torch.matmul(gates.t(), gates))
             
-            # 负载均衡损失（增强版）
+            # Load balancing loss (enhanced)
             expert_usage += gates.sum(0)
             usage_per_batch = gates.sum(0)
             target_usage = torch.ones_like(usage_per_batch) / model.num_experts
             
-            # 使用KL散度作为均衡损失
+            # Use KL divergence as balance loss
             balance_loss = F.kl_div(
                 F.log_softmax(usage_per_batch, dim=0),
                 target_usage,
                 reduction='batchmean'
             )
             
-            # 最小使用率约束
+            # Minimum usage constraint
             min_usage_loss = torch.relu(0.1 - gates.min(1)[0]).mean()
             
-            # 合并所有损失
+            # Combine all losses
             loss = (classification_loss + 
                    diversity_weight * diversity_loss + 
                    balance_weight * balance_loss + 
                    0.1 * correlation_loss +
-                   0.5 * min_usage_loss)  # 添加最小使用率约束
+                   0.5 * min_usage_loss)  # Add minimum usage constraint
             
             if scaler is not None:
                 scaler.scale(loss).backward()
@@ -304,7 +413,7 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         with torch.no_grad():
             for inputs, labels in test_loader:
                 inputs, labels = inputs.to(device), labels.to(device)
-                outputs, _ = model(inputs)  # 修改这里，忽略gates输出
+                outputs, _ = model(inputs)
                 _, predicted = torch.max(outputs, 1)
                 
                 total_test += labels.size(0)
@@ -339,6 +448,18 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         # Update the learning curve
         plot_learning_curve(epoch + 1, train_losses, train_accuracies, test_accuracies,
                           save_path=os.path.join(run_dir, "learning_curve.png"))
+        
+        # Periodically analyze experts and save visualization
+        if (epoch + 1) % expert_analysis_interval == 0 or epoch == 0 or epoch == num_epochs - 1:
+            print(f"\nAnalyzing expert specialization at epoch {epoch+1}...")
+            expert_accuracies, expert_contributions = analyze_experts(model, test_loader, device, num_classes=model.num_classes)
+            
+            # Save expert analysis visualization
+            expert_analysis_path = os.path.join(run_dir, f"expert_analysis_epoch{epoch+1}.png")
+            plot_expert_analysis(expert_accuracies, expert_contributions, expert_analysis_path)
+            
+            with open(log_file, "a") as f:
+                f.write(f"Expert analysis saved to {expert_analysis_path}\n")
         
         # Save checkpoint if test accuracy improved
         if test_acc > best_test_acc:
@@ -385,34 +506,12 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         with open(log_file, "a") as f:
             f.write("\n" + "-"*50 + "\n\n")
 
-    # 在训练结束后添加专家分析
-    print("\nAnalyzing expert specialization...")
+    # Perform final expert analysis
+    print("\nAnalyzing expert specialization at the end of training...")
     expert_accuracies, expert_contributions = analyze_experts(model, test_loader, device, num_classes=model.num_classes)
     
-    # 可视化专家分析结果
-    plt.figure(figsize=(15, 5))
-    
-    # Plot expert accuracies
-    plt.subplot(1, 2, 1)
-    im = plt.imshow(expert_accuracies.cpu().numpy(), cmap='YlOrRd', aspect='auto')
-    plt.colorbar(im, label='Accuracy (%)')
-    plt.xlabel('Class')
-    plt.ylabel('Expert')
-    plt.title('Expert Accuracy per Class')
-    
-    # Plot expert contributions
-    plt.subplot(1, 2, 2)
-    im = plt.imshow(expert_contributions.cpu().numpy(), cmap='YlOrRd', aspect='auto')
-    plt.colorbar(im, label='Average Contribution')
-    plt.xlabel('Class')
-    plt.ylabel('Expert')
-    plt.title('Expert Contribution per Class')
-    
-    plt.tight_layout()
-    
-    # Save expert analysis to the run directory
-    plt.savefig(os.path.join(run_dir, "expert_analysis.png"))
-    plt.close()  # Close the figure to free memory
+    # Save final expert analysis visualization
+    plot_expert_analysis(expert_accuracies, expert_contributions, os.path.join(run_dir, "expert_analysis.png"))
     
     # Save final training results
     final_results = {

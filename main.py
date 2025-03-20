@@ -12,7 +12,7 @@ from scipy.signal import savgol_filter
 import argparse
 
 # Import components from our custom modules
-from model import MoEModel
+from merge_model import MergedMoEModel
 from data_loader import load_all_datasets
 from train import train_and_evaluate_moe, plot_learning_curve
 
@@ -78,14 +78,27 @@ def set_seed(seed=42):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--num_experts", type=int, default=4, help="Number of experts in the MoE model")
-    parser.add_argument("--num_epochs", type=int, default=200, help="Number of epochs for training")
+    parser.add_argument("--num_experts", type=int, default=3, help="Number of experts in the MoE model")
+    parser.add_argument("--num_epochs", type=int, default=100, help="Number of epochs for training")
     parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
     parser.add_argument("--weight_decay", type=float, default=1e-4, help="Weight decay")
-    parser.add_argument("--patience", type=int, default=50, help="Patience for early stopping")
+    parser.add_argument("--patience", type=int, default=20, help="Patience for early stopping")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument("--seed", type=int, default=100, help="Random seed")
-    parser.add_argument("--model_name", type=str, default="moe_combined", help="Model name")
+    parser.add_argument("--model_name", type=str, default="merged_moe", help="Model name")
+    parser.add_argument("--submodels_dir", type=str, default="./submodels/A", help="Directory containing pretrained submodels")
+    parser.add_argument("--expert_analysis_interval", type=int, default=10, 
+                       help="Interval (in epochs) for saving expert analysis visualization (set to 0 to disable)")
+    
+    # MoE specific hyperparameters
+    parser.add_argument("--diversity_weight", type=float, default=0.1, 
+                       help="Controls diversity of expert specialization (range: 0.05-0.2)")
+    parser.add_argument("--balance_weight", type=float, default=0.5, 
+                       help="Controls load balancing between experts (range: 0.3-1.0)")
+    parser.add_argument("--initial_temperature", type=float, default=2.0, 
+                       help="Starting temperature for gating network (range: 1.5-4.0)")
+    parser.add_argument("--final_temperature", type=float, default=0.5, 
+                       help="Final temperature for gating network (range: 0.3-1.0)")
     
     # Parse arguments
     args = parser.parse_args()
@@ -96,13 +109,15 @@ if __name__ == "__main__":
     # Make sure output directories exist
     os.makedirs("./runs", exist_ok=True)
     
-    # Load all datasets combined
-    train_loader, test_loader, num_classes = load_all_datasets(batch_size=32)
+    # Load all datasets combined (15 classes)
+    train_loader, test_loader, num_classes = load_all_datasets(batch_size=args.batch_size)
     print(f"Total classes: {num_classes}")
     
-    # Create MoE model
-    num_experts = args.num_experts  # You can experiment with different number of experts
-    model = MoEModel(num_classes=num_classes, num_experts=num_experts)
+    # Create MergedMoE model with fixed number of experts (3)
+    model = MergedMoEModel(num_classes=num_classes, num_experts=3)
+    
+    # Load and merge pretrained models
+    model.load_pretrained_models(args.submodels_dir)
     
     # Train model
     best_acc = train_and_evaluate_moe(
@@ -113,7 +128,12 @@ if __name__ == "__main__":
         lr=args.lr,
         weight_decay=args.weight_decay,
         patience=args.patience,
-        model_name=f"{args.model_name}_{args.num_experts}experts"
+        model_name=args.model_name,
+        expert_analysis_interval=args.expert_analysis_interval,
+        diversity_weight=args.diversity_weight,
+        balance_weight=args.balance_weight,
+        initial_temperature=args.initial_temperature,
+        final_temperature=args.final_temperature
     )
     
-    print(f"Training completed with best accuracy: {best_acc:.2f}%") 
+    print(f"Training completed with best accuracy: {best_acc:.2f}%")

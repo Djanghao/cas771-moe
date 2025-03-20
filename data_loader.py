@@ -146,12 +146,17 @@ def load_all_datasets(batch_size=32):
     print(f"Dataset mean: {mean}, std: {std}")
     
     # Apply normalization
+    # transform = transforms.Compose([
+    #     transforms.ToTensor(),
+    #     transforms.Normalize(mean=mean.tolist(), std=std.tolist()),
+    #     transforms.RandomHorizontalFlip(),
+    #     transforms.RandomRotation(15),
+    #     transforms.RandomResizedCrop(size=all_train_data.shape[2:], scale=(0.8, 1.0))
+    # ])
+    
     transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize(mean=mean.tolist(), std=std.tolist()),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(15),
-        transforms.RandomResizedCrop(size=all_train_data.shape[2:], scale=(0.8, 1.0))
+        transforms.Normalize(mean=mean.tolist(), std=std.tolist())
     ])
     
     test_transform = transforms.Compose([
