@@ -449,8 +449,8 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         plot_learning_curve(epoch + 1, train_losses, train_accuracies, test_accuracies,
                           save_path=os.path.join(run_dir, "learning_curve.png"))
         
-        # Periodically analyze experts and save visualization
-        if (epoch + 1) % expert_analysis_interval == 0 or epoch == 0 or epoch == num_epochs - 1:
+        # Periodically analyze experts and save visualization (if enabled)
+        if expert_analysis_interval > 0 and ((epoch + 1) % expert_analysis_interval == 0 or epoch == 0 or epoch == num_epochs - 1):
             print(f"\nAnalyzing expert specialization at epoch {epoch+1}...")
             expert_accuracies, expert_contributions = analyze_experts(model, test_loader, device, num_classes=model.num_classes)
             
@@ -506,12 +506,13 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         with open(log_file, "a") as f:
             f.write("\n" + "-"*50 + "\n\n")
 
-    # Perform final expert analysis
-    print("\nAnalyzing expert specialization at the end of training...")
-    expert_accuracies, expert_contributions = analyze_experts(model, test_loader, device, num_classes=model.num_classes)
-    
-    # Save final expert analysis visualization
-    plot_expert_analysis(expert_accuracies, expert_contributions, os.path.join(run_dir, "expert_analysis.png"))
+    # Perform final expert analysis (if enabled)
+    if expert_analysis_interval > 0:
+        print("\nAnalyzing expert specialization at the end of training...")
+        expert_accuracies, expert_contributions = analyze_experts(model, test_loader, device, num_classes=model.num_classes)
+        
+        # Save final expert analysis visualization
+        plot_expert_analysis(expert_accuracies, expert_contributions, os.path.join(run_dir, "expert_analysis.png"))
     
     # Save final training results
     final_results = {
