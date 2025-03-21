@@ -89,6 +89,8 @@ if __name__ == "__main__":
     parser.add_argument("--submodels_dir", type=str, default="./submodels/A", help="Directory containing pretrained submodels")
     parser.add_argument("--expert_analysis_interval", type=int, default=10, 
                        help="Interval (in epochs) for saving expert analysis visualization (set to 0 to disable)")
+    parser.add_argument("--load_model_path", type=str, default=None, 
+                       help="Path to a previously saved model checkpoint to load instead of using pretrained submodels")
     
     # MoE specific hyperparameters
     parser.add_argument("--diversity_weight", type=float, default=0.1, 
@@ -116,8 +118,21 @@ if __name__ == "__main__":
     # Create MergedMoE model with fixed number of experts (3)
     model = MergedMoEModel(num_classes=num_classes, num_experts=3)
     
-    # Load and merge pretrained models
-    model.load_pretrained_models(args.submodels_dir)
+    # Either load a specific previous model weight or use the pretrained submodels
+    if args.load_model_path and os.path.exists(args.load_model_path):
+        print(f"Loading model from checkpoint: {args.load_model_path}")
+        checkpoint = torch.load(args.load_model_path, map_location=torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
+        
+        # Check if the checkpoint contains model_state_dict or is a state_dict directly
+        if 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            model.load_state_dict(checkpoint)
+        print("Successfully loaded model from checkpoint")
+    else:
+        # Load and merge pretrained models
+        print(f"Loading and merging pretrained submodels from: {args.submodels_dir}")
+        model.load_pretrained_models(args.submodels_dir)
     
     # Train model
     best_acc = train_and_evaluate_moe(
