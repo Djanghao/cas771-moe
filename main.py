@@ -86,12 +86,14 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument("--seed", type=int, default=100, help="Random seed")
     parser.add_argument("--model_name", type=str, default="merged_moe", help="Model name")
-    parser.add_argument("--submodels_dir", type=str, default="./submodels/A", help="Directory containing pretrained submodels")
+    parser.add_argument("--submodels_dir", type=str, default="./submodels", help="Directory containing pretrained submodels")
     parser.add_argument("--expert_analysis_interval", type=int, default=10, 
                        help="Interval (in epochs) for saving expert analysis visualization (set to 0 to disable)")
     parser.add_argument("--load_model_path", type=str, default=None, 
                        help="Path to a previously saved model checkpoint to load instead of using pretrained submodels")
-    
+    parser.add_argument("--task", type=str, default='A', choices=['A', 'B'], 
+                        help="Task A or B")
+                        
     # MoE specific hyperparameters
     parser.add_argument("--diversity_weight", type=float, default=0.1, 
                        help="Controls diversity of expert specialization (range: 0.05-0.2)")
@@ -112,7 +114,7 @@ if __name__ == "__main__":
     os.makedirs("./runs", exist_ok=True)
     
     # Load all datasets combined (15 classes)
-    train_loader, test_loader, num_classes = load_all_datasets(batch_size=args.batch_size)
+    train_loader, test_loader, num_classes = load_all_datasets(batch_size=args.batch_size, task=args.task)
     print(f"Total classes: {num_classes}")
     
     # Create MergedMoE model with fixed number of experts (3)
@@ -131,8 +133,9 @@ if __name__ == "__main__":
         print("Successfully loaded model from checkpoint")
     else:
         # Load and merge pretrained models
-        print(f"Loading and merging pretrained submodels from: {args.submodels_dir}")
-        model.load_pretrained_models(args.submodels_dir)
+        submodels_dir = os.path.join(args.submodels_dir, f"{args.task}")
+        print(f"Loading and merging pretrained submodels from: {submodels_dir}")
+        model.load_pretrained_models(submodels_dir)
     
     # Train model
     best_acc = train_and_evaluate_moe(

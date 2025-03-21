@@ -22,12 +22,17 @@ class CAS771Dataset(Dataset):
             img = self.transform(img)
         return img, label
 
-def load_data(data_path):
+def load_data(data_path, task='A'):
     raw_data = torch.load(data_path)
-    data = raw_data['data']
-    labels = raw_data['labels']
-    indices = raw_data['indices']
-    return data, labels, indices
+    if task == 'A':
+        data = raw_data['data']
+        labels = raw_data['labels']
+        indices = raw_data['indices']
+        return data, labels, indices
+    elif task == 'B':
+        data = raw_data['data'].numpy().transpose(0, 3, 1, 2)
+        labels = raw_data['labels'].numpy()
+    return data, labels, None
 
 def remap_labels(labels, class_mapping):
     return [class_mapping[label] for label in labels]
@@ -51,18 +56,28 @@ def calculate_normalization_stats(dataloader):
 
     return mean, std
 
-def load_all_datasets(batch_size=32):
+def load_all_datasets(batch_size=32, task='A'):
     """Load and combine all three datasets for 15-class classification"""
     # Load each dataset
-    data_paths = {
-        1: ('./data/TaskA/Model1_trees_superclass/model1_train_supercls.pth', 
-            './data/TaskA/Model1_trees_superclass/model1_test_supercls.pth'),
-        2: ('./data/TaskA/Model2_flowers_superclass/model2_train_supercls.pth', 
-            './data/TaskA/Model2_flowers_superclass/model2_test_supercls.pth'),
-        3: ('./data/TaskA/Model3_fruit+veg_superclass/model3_train_supercls.pth', 
-            './data/TaskA/Model3_fruit+veg_superclass/model3_test_supercls.pth')
-    }
-    
+    if task == 'A':
+        data_paths = {
+            1: ('./data/TaskA/Model1_trees_superclass/model1_train_supercls.pth', 
+                './data/TaskA/Model1_trees_superclass/model1_test_supercls.pth'),
+            2: ('./data/TaskA/Model2_flowers_superclass/model2_train_supercls.pth', 
+                './data/TaskA/Model2_flowers_superclass/model2_test_supercls.pth'),
+            3: ('./data/TaskA/Model3_fruit+veg_superclass/model3_train_supercls.pth', 
+                './data/TaskA/Model3_fruit+veg_superclass/model3_test_supercls.pth')
+        }
+    else:  # task B
+        data_paths = {
+            1: ('./data/TaskB/train_dataB_model_1.pth', 
+                './data/TaskB/val_dataB_model_1.pth'),
+            2: ('./data/TaskB/train_dataB_model_2.pth', 
+                './data/TaskB/val_dataB_model_2.pth'),
+            3: ('./data/TaskB/train_dataB_model_3.pth', 
+                './data/TaskB/val_dataB_model_3.pth')
+        }
+        
     all_train_data = []
     all_train_labels = []
     all_test_data = []
@@ -74,7 +89,7 @@ def load_all_datasets(batch_size=32):
     # First pass: determine the total number of classes and create mappings
     for model_id in [1, 2, 3]:
         train_data_path, _ = data_paths[model_id]
-        _, train_labels, _ = load_data(train_data_path)
+        _, train_labels, _ = load_data(train_data_path, task)
         unique_labels = sorted(set(train_labels))
         total_classes += len(unique_labels)
         print(f"Dataset {model_id} has {len(unique_labels)} classes: {unique_labels}")
@@ -87,8 +102,8 @@ def load_all_datasets(batch_size=32):
         train_data_path, test_data_path = data_paths[model_id]
         
         # Load data
-        train_data, train_labels, _ = load_data(train_data_path)
-        test_data, test_labels, _ = load_data(test_data_path)
+        train_data, train_labels, _ = load_data(train_data_path, task)
+        test_data, test_labels, _ = load_data(test_data_path, task)
         
         # Unique labels in this dataset
         unique_labels = sorted(set(train_labels))
@@ -119,6 +134,10 @@ def load_all_datasets(batch_size=32):
         all_test_labels.extend(mapped_test_labels)
     
     # Combine data
+    print(type(all_train_data[0]))
+    if not isinstance(all_train_data[0], torch.Tensor):
+        all_train_data = [torch.from_numpy(arr) for arr in all_train_data]
+        all_test_data = [torch.from_numpy(arr) for arr in all_test_data]
     all_train_data = torch.cat(all_train_data, dim=0)
     all_test_data = torch.cat(all_test_data, dim=0)
     
@@ -146,18 +165,18 @@ def load_all_datasets(batch_size=32):
     print(f"Dataset mean: {mean}, std: {std}")
     
     # Apply normalization
-    # transform = transforms.Compose([
-    #     transforms.ToTensor(),
-    #     transforms.Normalize(mean=mean.tolist(), std=std.tolist()),
-    #     transforms.RandomHorizontalFlip(),
-    #     transforms.RandomRotation(15),
-    #     transforms.RandomResizedCrop(size=all_train_data.shape[2:], scale=(0.8, 1.0))
-    # ])
-    
     transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize(mean=mean.tolist(), std=std.tolist())
+        transforms.Normalize(mean=mean.tolist(), std=std.tolist()),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomRotation(15),
+        transforms.RandomResizedCrop(size=all_train_data.shape[2:], scale=(0.8, 1.0))
     ])
+    
+    # transform = transforms.Compose([
+    #     transforms.ToTensor(),
+    #     transforms.Normalize(mean=mean.tolist(), std=std.tolist())
+    # ])
     
     test_transform = transforms.Compose([
         transforms.ToTensor(),

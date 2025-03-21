@@ -264,7 +264,8 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     
     # Use cosine annealing learning rate scheduler
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+    # scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
     
     # Dynamically adjust gating network temperature
     current_temperature = initial_temperature
@@ -318,7 +319,10 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         total_train = 0
         
         # Update temperature
-        current_temperature = initial_temperature - (initial_temperature - final_temperature) * (epoch / num_epochs)
+        # current_temperature = initial_temperature - (initial_temperature - final_temperature) * (epoch / num_epochs)
+        current_temperature = initial_temperature - (initial_temperature - final_temperature) * (epoch / 10)
+        if epoch > 10:
+            current_temperature = final_temperature
         model.gating_network.temperature = current_temperature
         
         # Track usage of each expert
