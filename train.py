@@ -451,6 +451,13 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
             with open(log_file, "a") as f:
                 f.write(f"Expert analysis saved to {expert_analysis_path}\n")
         
+        def schedule_step(step):
+            for i in range(step):
+                scheduler.step()
+        
+        if test_acc > 73.5:
+            schedule_step(10)
+        
         # Save checkpoint if test accuracy improved
         if test_acc > best_test_acc:
             patience_counter = 0

@@ -180,7 +180,7 @@ def load_all_datasets(batch_size=32, task='A'):
     train_dataset = CAS771Dataset(all_train_data, all_train_labels, transform=transform)
     test_dataset = CAS771Dataset(all_test_data, all_test_labels, transform=test_transform)
     
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=20, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=20, pin_memory=True)
     
     return train_loader, test_loader, total_classes

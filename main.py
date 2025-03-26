@@ -13,7 +13,8 @@ import argparse
 
 # Import components from our custom modules
 from merge_model import MergedMoEModel
-from data_loader import load_all_datasets
+# from data_loader_dep import load_all_datasets ! deprecated
+from data_loader_dep import load_all_datasets
 from train import train_and_evaluate_moe, plot_learning_curve
 
 class CAS771Dataset(Dataset):
@@ -146,7 +147,7 @@ if __name__ == "__main__":
         lr=args.lr,
         weight_decay=args.weight_decay,
         patience=args.patience,
-        model_name=args.model_name,
+        model_name=args.model_name + "_" + args.task,
         expert_analysis_interval=args.expert_analysis_interval,
         diversity_weight=args.diversity_weight,
         balance_weight=args.balance_weight,
