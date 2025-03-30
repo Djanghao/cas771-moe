@@ -13,19 +13,61 @@ This repository contains a training framework for Mixture of Experts (MoE) model
 
 ## Model Architecture
 
+The architecture consists of several key components working together to form a Mixture of Experts (MoE) system:
+
 ### Feature Extractor
 - Convolutional neural network that extracts features from input data
 - Shared across all experts to provide a common representation
+- Structure:
+  - ConvBlock(3→64): Convolution + BatchNorm + ReLU
+  - ResidualBlock(64→128): Residual connection with conv layers
+  - MaxPool2d(2): Spatial downsampling
+  - ResidualBlock(128→256): Deeper residual block with 2 conv layers
+  - MaxPool2d(2): Further spatial downsampling
+  - ConvBlock(256→512): 1x1 convolution for channel projection
+- Initialized by averaging parameters from pretrained models
 
-### Expert Networks
-- Multiple specialized neural networks (default: 3)
+### Expert Networks (default: 3)
+- Specialized networks that process features from the feature extractor
 - Each expert can specialize in different aspects of the task or different subsets of data
+- Structure per expert:
+  - Depthwise Convolution: Conv2d(512→512, kernel=3, groups=512)
+  - Pointwise Convolution: Conv2d(512→512, kernel=1)
+  - BatchNorm2d(512)
+  - ReLU activation
+  - Dropout(0.5)
+  - AdaptiveAvgPool2d((1, 1))
+  - Flatten()
+  - Dropout(0.5)
 - Expert outputs are combined based on gating network weights
 
 ### Gating Network
 - Determines which experts to use for each input sample
-- Produces a weight distribution over experts
+- Produces both a weight distribution over experts AND additional features
+- Two parallel paths:
+  1. Feature generation network:
+     - Linear(512→256)
+     - BatchNorm1d(256)
+     - ReLU
+     - Dropout(0.2)
+     - Linear(256→256)
+     - BatchNorm1d(256)
+     - ReLU
+  2. Gating weight network:
+     - Linear(512→256)
+     - BatchNorm1d(256)
+     - ReLU
+     - Dropout(0.2)
+     - Linear(256→num_experts)
+     - Temperature-scaled softmax
+- Training noise added to gating logits to prevent getting stuck in local optima
 - Uses temperature-scaled softmax for controlling the "softness" of expert selection
+
+### Feature Combination and Classification
+- Expert features (512-dim each) are weighted by gating outputs and combined
+- Gating features (256-dim) are concatenated with combined expert features
+- Final unified classifier: Linear(768→num_classes)
+- Returns both class predictions and expert gating weights
 
 ## Parameters
 
@@ -128,13 +170,17 @@ Where:
 
 1. **Initialization**:
    - The model is initialized with a shared feature extractor and multiple experts
+   - Feature extractor is initialized by averaging parameters from pretrained models
+   - Expert networks are initialized from corresponding layers of pretrained models
    - The gating network begins with a high temperature to encourage exploration
 
 2. **Forward Pass**:
    - Input data is processed by the shared feature extractor
-   - The gating network assigns weights to each expert
-   - Each expert processes the features and produces outputs
-   - Final prediction is a weighted combination of expert outputs
+   - The gating network assigns weights to each expert and generates additional features
+   - Each expert processes the extracted features and produces expert-specific features
+   - Expert features are weighted by gating outputs and combined
+   - Gating features are concatenated with the combined expert features
+   - Final classifier produces class predictions from the concatenated features
 
 3. **Loss Calculation**:
    - Task loss (cross-entropy) is calculated based on prediction accuracy
@@ -174,10 +220,4 @@ Run the training script with desired parameters:
 
 ```bash
 # Basic usage with default parameters
-python3 -m main
-
-# Customize expert specialization
-python3 -m main --diversity_weight 0.15 --balance_weight 0.8 --initial_temperature 3.0 --final_temperature 0.4
-
-# Save expert analysis more frequently
-python3 -m main --expert_analysis_interval 5
+python main.py --num_epochs 10 --expert_analysis_interval 10

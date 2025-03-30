@@ -7,11 +7,25 @@ import copy
 from sub_model import SubModel, ConvBlock, ResidualBlock
 
 class GatingNetwork(nn.Module):
-    """Gating network with temperature scaling and balanced initialization"""
-    def __init__(self, feature_dim=512, num_experts=3, temperature=1.0):
+    """Enhanced gating network that generates features to be concatenated with expert features"""
+    def __init__(self, feature_dim=512, num_experts=3, feature_output_dim=256, temperature=1.0):
         super().__init__()
         self.temperature = temperature
-        self.net = nn.Sequential(
+        self.feature_output_dim = feature_output_dim
+        
+        # Feature generation network
+        self.feature_net = nn.Sequential(
+            nn.Linear(feature_dim, feature_dim // 2),
+            nn.BatchNorm1d(feature_dim // 2),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2),
+            nn.Linear(feature_dim // 2, feature_output_dim),
+            nn.BatchNorm1d(feature_output_dim),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Gating network for expert weighting
+        self.gate_net = nn.Sequential(
             nn.Linear(feature_dim, feature_dim // 2),
             nn.BatchNorm1d(feature_dim // 2),
             nn.ReLU(inplace=True),
@@ -20,16 +34,22 @@ class GatingNetwork(nn.Module):
         )
         
         # Initialize the last layer to produce more uniform expert selection
-        self.net[-1].weight.data.normal_(0, 0.01)
-        self.net[-1].bias.data.fill_(0)  # Equal initial probability for all experts
+        self.gate_net[-1].weight.data.normal_(0, 0.01)
+        self.gate_net[-1].bias.data.fill_(0)  # Equal initial probability for all experts
         
     def forward(self, x):
-        logits = self.net(x) / self.temperature
+        # Generate features
+        features = self.feature_net(x)
+        
+        # Generate gating weights
+        logits = self.gate_net(x) / self.temperature
         # Add noise to prevent getting stuck in local optima during early training
         if self.training:
             noise = torch.randn_like(logits) * 0.1
             logits = logits + noise
-        return F.softmax(logits, dim=1)
+        gates = F.softmax(logits, dim=1)
+        
+        return features, gates
 
 class MergedMoEModel(nn.Module):
     def __init__(self, num_classes=15, num_experts=3):
@@ -62,13 +82,16 @@ class MergedMoEModel(nn.Module):
             ) for _ in range(num_experts)
         ])
         
-        # Gating network with initial high temperature
-        self.gating_network = GatingNetwork(512, num_experts, temperature=2.0)
+        # Define feature dimensions
+        self.expert_feature_dim = 512
+        self.gating_feature_dim = 256
+        self.combined_feature_dim = self.expert_feature_dim + self.gating_feature_dim
         
-        # Classifier layers (will be initialized from the three models)
-        self.classifiers = nn.ModuleList([
-            nn.Linear(512, num_classes) for _ in range(num_experts)
-        ])
+        # Enhanced gating network that generates features
+        self.gating_network = GatingNetwork(512, num_experts, self.gating_feature_dim, temperature=2.0)
+        
+        # Single unified classifier for the combined features
+        self.classifier = nn.Linear(self.combined_feature_dim, num_classes)
         
         # Initialize with default weights first
         self._initialize_weights()
@@ -76,22 +99,28 @@ class MergedMoEModel(nn.Module):
     def forward(self, x):
         features = self.feature_extractor(x)
         
-        # Extract features before flattening for the experts
-        expert_outputs = []
+        # Extract features from experts
+        expert_features = []
         for i in range(self.num_experts):
-            expert_out = self.experts[i](features)
-            expert_out = self.classifiers[i](expert_out)
-            expert_outputs.append(expert_out.unsqueeze(1))
+            expert_feat = self.experts[i](features)
+            expert_features.append(expert_feat.unsqueeze(1))
         
-        # Get gating weights
-        # Create a version of features suitable for the gating network
+        # Stack expert features
+        expert_features = torch.cat(expert_features, dim=1)  # [batch_size, num_experts, expert_feature_dim]
+        
+        # Get gating features and weights
         pooled_features = F.adaptive_avg_pool2d(features, (1, 1)).view(features.size(0), -1)
-        gates = self.gating_network(pooled_features)
+        gating_features, gates = self.gating_network(pooled_features)
         
-        # Combine expert outputs using gates
-        expert_outputs = torch.cat(expert_outputs, dim=1)
-        weighted_outputs = gates.unsqueeze(-1) * expert_outputs
-        final_output = weighted_outputs.sum(dim=1)
+        # Weight and combine expert features
+        weighted_expert_features = gates.unsqueeze(-1) * expert_features
+        combined_expert_features = weighted_expert_features.sum(dim=1)  # [batch_size, expert_feature_dim]
+        
+        # Concatenate gating features with combined expert features
+        combined_features = torch.cat([combined_expert_features, gating_features], dim=1)
+        
+        # Final classification
+        final_output = self.classifier(combined_features)
         
         return final_output, gates
     
@@ -197,25 +226,12 @@ class MergedMoEModel(nn.Module):
             target_expert[2].running_mean.copy_(conv3_source.bn.running_mean)
             target_expert[2].running_var.copy_(conv3_source.bn.running_var)
             
-            # Classifier layer (need to expand from 5 classes to 15 classes)
-            source_classifier = temp_model.classifier[-1]  # Last layer of classifier
-            target_classifier = self.classifiers[i]
-            
-            # Copy the weights for the 5 classes this expert was trained on
-            # and initialize the rest to small values
-            start_idx = i * 5
-            end_idx = start_idx + 5
-            
-            # Initialize all classes with small weights
-            target_classifier.weight.data.normal_(0, 0.01)
-            target_classifier.bias.data.fill_(-3.0)
-            
-            # Copy weights and biases for the expert's specialized classes
-            target_classifier.weight.data[start_idx:end_idx, :] = source_classifier.weight.data
-            target_classifier.bias.data[start_idx:end_idx] = source_classifier.bias.data
-            
-            # Emphasize the expert's specialized classes
-            target_classifier.bias.data[start_idx:end_idx] += 2.0
+            # Note: We no longer load classifier weights for each expert
+            # Instead, we'll initialize our unified classifier with normal distribution
+            if i == 0:  # Only do this once
+                # Initialize the unified classifier with small weights
+                nn.init.normal_(self.classifier.weight.data, 0, 0.01)
+                nn.init.constant_(self.classifier.bias.data, 0)
             
         print("Successfully loaded and merged pretrained models")
         return self

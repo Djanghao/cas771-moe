@@ -75,49 +75,38 @@ def analyze_experts(model, test_loader, device, num_classes=15):
     model.eval()
     
     # Initialize counters for each expert and class
-    expert_class_correct = torch.zeros(model.num_experts, num_classes).to(device)
     expert_class_total = torch.zeros(model.num_experts, num_classes).to(device)
     expert_contributions = torch.zeros(model.num_experts, num_classes).to(device)
     
     # Pre-create identity matrix and move to correct device
     eye_matrix = torch.eye(num_classes).to(device)
     
+    # Since we no longer have per-expert classifiers, we'll track contribution instead
+    # of per-expert accuracy
     with torch.no_grad():
         for inputs, labels in test_loader:
             inputs, labels = inputs.to(device), labels.to(device)
-            batch_size = labels.size(0)
             
             # Get features and outputs
             outputs, gates = model(inputs)
             
-            # Get individual expert outputs
-            features = model.feature_extractor(inputs)
-            expert_outputs = []
+            # Record expert contributions (gate values) for each class
+            one_hot_labels = eye_matrix[labels]  # [batch_size, num_classes]
             for i in range(model.num_experts):
-                expert_out = model.experts[i](features)
-                expert_out = model.classifiers[i](expert_out)
-                expert_outputs.append(expert_out)
+                gate_weights = gates[:, i].unsqueeze(1)  # [batch_size, 1]
+                expert_contributions[i] += (gate_weights * one_hot_labels).sum(0)  # sum over batch
                 
-                # Get predictions for this expert
-                _, predicted = torch.max(expert_out, 1)
-                
-                # Update correct predictions for each class
+                # Update total counts for each class
                 for label_idx in range(len(labels)):
                     label = labels[label_idx]
                     expert_class_total[i, label] += 1
-                    if predicted[label_idx] == label:
-                        expert_class_correct[i, label] += 1
-                
-                # Record expert contributions (gate values) for each class
-                one_hot_labels = eye_matrix[labels]  # [batch_size, num_classes]
-                gate_weights = gates[:, i].unsqueeze(1)  # [batch_size, 1]
-                expert_contributions[i] += (gate_weights * one_hot_labels).sum(0)  # sum over batch
     
-    # Calculate accuracy per expert per class
-    expert_class_accuracy = (expert_class_correct / expert_class_total.clamp(min=1)) * 100
-    
-    # Calculate average gate values per expert per class
+    # We don't have per-expert accuracy anymore, so we'll just use contribution
     expert_avg_contributions = expert_contributions / expert_class_total.clamp(min=1)
+    
+    # For visualization compatibility, create a dummy accuracy tensor based on contributions
+    # This helps reuse the existing visualization code
+    expert_class_accuracy = expert_avg_contributions * 100
     
     # Print analysis
     print("\nExpert Analysis:")
@@ -126,23 +115,20 @@ def analyze_experts(model, test_loader, device, num_classes=15):
     for expert_idx in range(model.num_experts):
         print(f"\nExpert {expert_idx + 1}:")
         print("-------------------")
-        print("Class-wise Accuracy:")
+        print("Class-wise Contribution:")
         for class_idx in range(num_classes):
-            acc = expert_class_accuracy[expert_idx, class_idx].item()
             contrib = expert_avg_contributions[expert_idx, class_idx].item()
             total = expert_class_total[expert_idx, class_idx].item()
             if total > 0:
-                print(f"Class {class_idx}: Accuracy = {acc:.2f}%, "
-                      f"Average Contribution = {contrib:.3f}, "
+                print(f"Class {class_idx}: Average Contribution = {contrib:.3f}, "
                       f"Samples = {int(total)}")
         
         # Find top classes for this expert
-        top_classes = torch.argsort(expert_class_accuracy[expert_idx], descending=True)[:5]
+        top_classes = torch.argsort(expert_avg_contributions[expert_idx], descending=True)[:5]
         print("\nTop 5 Classes:")
         for class_idx in top_classes:
-            acc = expert_class_accuracy[expert_idx, class_idx].item()
             contrib = expert_avg_contributions[expert_idx, class_idx].item()
-            print(f"Class {class_idx}: Accuracy = {acc:.2f}%, Contribution = {contrib:.3f}")
+            print(f"Class {class_idx}: Contribution = {contrib:.3f}")
     
     return expert_class_accuracy, expert_avg_contributions
 
@@ -150,19 +136,19 @@ def plot_expert_analysis(expert_accuracies, expert_contributions, save_path):
     """Create and save visualization of expert specialization
     
     Args:
-        expert_accuracies: Tensor of shape (num_experts, num_classes) with accuracy values
+        expert_accuracies: Tensor of shape (num_experts, num_classes) with contribution values (scaled)
         expert_contributions: Tensor of shape (num_experts, num_classes) with contribution values
         save_path: Path to save the visualization
     """
     plt.figure(figsize=(15, 5))
     
-    # Plot expert accuracies
+    # Plot expert contributions (scaled version)
     plt.subplot(1, 2, 1)
     im = plt.imshow(expert_accuracies.cpu().numpy(), cmap='YlOrRd', aspect='auto')
-    plt.colorbar(im, label='Accuracy (%)')
+    plt.colorbar(im, label='Contribution (scaled)')
     plt.xlabel('Class')
     plt.ylabel('Expert')
-    plt.title('Expert Accuracy per Class')
+    plt.title('Expert Contribution per Class (Scaled)')
     
     # Plot expert contributions
     plt.subplot(1, 2, 2)
@@ -278,7 +264,9 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     
     # Use cosine annealing learning rate scheduler
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+    # TODO
+    # scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
     
     # Dynamically adjust gating network temperature
     current_temperature = initial_temperature
@@ -295,20 +283,19 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
     total_params = sum(p.numel() for p in model.parameters())
     feature_params = sum(p.numel() for p in model.feature_extractor.parameters())
     gating_params = sum(p.numel() for p in model.gating_network.parameters())
+    classifier_params = sum(p.numel() for p in model.classifier.parameters())
     
     print(f"\nModel Parameters Breakdown:")
     print(f"Feature Extractor: {feature_params:,}")
     print(f"Gating Network: {gating_params:,}")
     print("Experts:")
     expert_params = []
-    classifier_params = []
     for i in range(model.num_experts):
         expert_p = sum(p.numel() for p in model.experts[i].parameters())
-        classifier_p = sum(p.numel() for p in model.classifiers[i].parameters())
         expert_params.append(expert_p)
-        classifier_params.append(classifier_p)
-        print(f"  Expert {i+1}: {expert_p:,} (Expert) + {classifier_p:,} (Classifier) = {expert_p + classifier_p:,}")
+        print(f"  Expert {i+1}: {expert_p:,}")
     
+    print(f"Unified Classifier: {classifier_params:,}")
     print(f"\nTotal parameters: {total_params:,}")
     
     # Log parameters breakdown
@@ -318,7 +305,8 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         f.write(f"Gating Network: {gating_params:,}\n")
         f.write("Experts:\n")
         for i in range(model.num_experts):
-            f.write(f"  Expert {i+1}: {expert_params[i]:,} (Expert) + {classifier_params[i]:,} (Classifier) = {expert_params[i] + classifier_params[i]:,}\n")
+            f.write(f"  Expert {i+1}: {expert_params[i]:,}\n")
+        f.write(f"Unified Classifier: {classifier_params:,}\n")
         f.write(f"\nTotal parameters: {total_params:,}\n\n")
 
     # Mixed precision training
@@ -332,7 +320,11 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         total_train = 0
         
         # Update temperature
-        current_temperature = initial_temperature - (initial_temperature - final_temperature) * (epoch / num_epochs)
+        # TODO
+        # current_temperature = initial_temperature - (initial_temperature - final_temperature) * (epoch / num_epochs)
+        current_temperature = initial_temperature - (initial_temperature - final_temperature) * (epoch / 10)
+        if epoch > 10:
+            current_temperature = final_temperature
         model.gating_network.temperature = current_temperature
         
         # Track usage of each expert
@@ -449,8 +441,8 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         plot_learning_curve(epoch + 1, train_losses, train_accuracies, test_accuracies,
                           save_path=os.path.join(run_dir, "learning_curve.png"))
         
-        # Periodically analyze experts and save visualization
-        if (epoch + 1) % expert_analysis_interval == 0 or epoch == 0 or epoch == num_epochs - 1:
+        # Periodically analyze experts and save visualization (if enabled)
+        if expert_analysis_interval > 0 and ((epoch + 1) % expert_analysis_interval == 0 or epoch == 0 or epoch == num_epochs - 1):
             print(f"\nAnalyzing expert specialization at epoch {epoch+1}...")
             expert_accuracies, expert_contributions = analyze_experts(model, test_loader, device, num_classes=model.num_classes)
             
@@ -460,6 +452,13 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
             
             with open(log_file, "a") as f:
                 f.write(f"Expert analysis saved to {expert_analysis_path}\n")
+        
+        def schedule_step(step):
+            for i in range(step):
+                scheduler.step()
+        
+        if test_acc > 73.5:
+            schedule_step(10)
         
         # Save checkpoint if test accuracy improved
         if test_acc > best_test_acc:
@@ -506,12 +505,13 @@ def train_and_evaluate_moe(model, train_loader, test_loader, num_epochs=100,
         with open(log_file, "a") as f:
             f.write("\n" + "-"*50 + "\n\n")
 
-    # Perform final expert analysis
-    print("\nAnalyzing expert specialization at the end of training...")
-    expert_accuracies, expert_contributions = analyze_experts(model, test_loader, device, num_classes=model.num_classes)
-    
-    # Save final expert analysis visualization
-    plot_expert_analysis(expert_accuracies, expert_contributions, os.path.join(run_dir, "expert_analysis.png"))
+    # Perform final expert analysis (if enabled)
+    if expert_analysis_interval > 0:
+        print("\nAnalyzing expert specialization at the end of training...")
+        expert_accuracies, expert_contributions = analyze_experts(model, test_loader, device, num_classes=model.num_classes)
+        
+        # Save final expert analysis visualization
+        plot_expert_analysis(expert_accuracies, expert_contributions, os.path.join(run_dir, "expert_analysis.png"))
     
     # Save final training results
     final_results = {

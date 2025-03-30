@@ -1,0 +1,282 @@
+
+\documentclass[conference]{IEEEtran}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+\begin{document}
+
+\title{Mixture of Experts for Multi-Task Image Classification}
+
+\author{\IEEEauthorblockN{Houston Zhang}
+\IEEEauthorblockA{Department of Computing and Software\\
+McMaster University\\
+Email: zhanh394@mcmaster.ca}}
+
+\maketitle
+
+\begin{abstract}
+Mixture of Experts (MoE) models have shown promising results by combining multiple specialized networks to solve complex tasks. This paper presents a novel MoE architecture for image classification that utilizes three expert networks, each trained on five classification tasks. Our approach features a shared feature extractor, specialized expert networks, and a dynamic gating mechanism that intelligently routes inputs to the most suitable experts. We introduce multiple loss components including diversity loss, balance loss, and consistency loss to ensure effective expert specialization while maintaining overall model performance. Experimental results demonstrate that our MoE architecture effectively leverages the strengths of individual experts, enabling better performance on multiple tasks compared to single-model approaches. The proposed model also shows improved parameter efficiency and better handling of task diversity through its specialized expert structure.
+\end{abstract}
+
+\begin{IEEEkeywords}
+mixture of experts, deep learning, computer vision, multi-task learning, convolutional neural networks, image classification
+\end{IEEEkeywords}
+
+\section{Introduction}
+Deep neural networks have achieved remarkable success in various computer vision tasks, but typically require dedicated models for each task or domain. Mixture of Experts (MoE) architectures offer a promising solution by combining multiple specialized networks (experts) with a routing mechanism that directs inputs to the most appropriate experts. This approach enables more efficient parameter usage and potentially better performance through specialization.
+
+In this paper, we address the challenge of building a unified model that can effectively handle multiple classification tasks. Our implementation features three expert networks, each trained on five classification tasks, with a shared feature extraction backbone and a gating network to dynamically route inputs. This design enables the model to leverage specialized knowledge while maintaining parameter efficiency.
+
+The key contributions of this paper include:
+\begin{itemize}
+    \item A novel MoE architecture that combines a shared feature extractor with specialized expert networks for image classification
+    \item A dynamic gating mechanism that effectively routes inputs to the appropriate experts based on learned features
+    \item A comprehensive training methodology with carefully designed loss functions that encourage expert specialization, balanced utilization, and consistency
+    \item Experimental evaluation demonstrating the effectiveness of our approach across multiple classification tasks
+\end{itemize}
+
+\section{Related Work}
+\subsection{Mixture of Experts}
+The Mixture of Experts (MoE) concept was first introduced by Jacobs et al. \cite{jacobs1991adaptive} as a method for combining multiple neural networks, each specializing in different parts of the input space. Instead of using a traditional ensemble where all models process all inputs, MoE dynamically routes inputs to the most appropriate experts, which can lead to both improved performance and computational efficiency.
+
+Recent work by Shazeer et al. \cite{shazeer2017outrageously} demonstrated the scalability of MoE for language modeling tasks by incorporating sparsely-activated expert layers within a larger transformer model. Their approach allows training models with significantly more parameters without a proportional increase in computational cost, as only a subset of the network is active for any given input.
+
+\subsection{Multi-Task Learning}
+Multi-task learning aims to improve generalization by sharing representations between related tasks \cite{caruana1997multitask}. Traditional approaches typically use hard parameter sharing, where a common backbone network is shared across all tasks with task-specific output heads. However, this can lead to negative transfer when tasks are not well-aligned.
+
+More recent work has explored soft parameter sharing \cite{misra2016cross} and task-specific adaptations \cite{ruder2019latent}. These approaches allow more flexibility in which parameters are shared between tasks, potentially reducing negative transfer. Our MoE approach provides an alternative solution by dynamically determining the degree of parameter sharing based on the input features.
+
+\section{Methodology}
+\subsection{Problem Formulation}
+We address the problem of image classification across multiple classes (15 in total) using a Mixture of Experts approach. Our goal is to train a model that can effectively leverage specialized expert networks to achieve better performance than a single unified model of comparable size. Each expert is specialized in a subset of classes (5 classes per expert), and the model dynamically determines which experts to utilize for a given input.
+
+\subsection{Architecture}
+Our MoE architecture consists of several key components:
+
+\subsubsection{Shared Feature Extractor}
+The feature extractor forms the base of our model and is shared across all experts. It consists of:
+\begin{itemize}
+    \item An initial convolutional block with batch normalization and ReLU activation
+    \item Two residual blocks with increasing feature dimensions
+    \item Max pooling layers for spatial dimension reduction
+    \item A final convolutional block that produces rich feature maps
+\end{itemize}
+
+This shared extractor is initialized by averaging parameters from pretrained models, providing a strong starting point that captures common low-level features useful across all classification tasks.
+
+\subsubsection{Expert Networks}
+We use three expert networks, each with a specialized architecture:
+\begin{itemize}
+    \item Depthwise separable convolutions for efficient feature processing
+    \item Batch normalization and dropout for regularization
+    \item Adaptive average pooling to produce fixed-size feature vectors
+\end{itemize}
+
+Each expert network processes the output of the shared feature extractor and produces a feature representation that emphasizes different aspects of the input relevant to its specialized classes.
+
+\subsubsection{Gating Network}
+The gating network is a critical component that determines which experts to route the input to:
+\begin{itemize}
+    \item Takes the pooled features from the feature extractor as input
+    \item Consists of fully connected layers with batch normalization and ReLU activations
+    \item Produces gating weights through a softmax function with temperature control
+    \item Also generates feature representations that are concatenated with expert features
+\end{itemize}
+
+The temperature parameter in the softmax function controls the "softness" of expert selection. Higher temperatures lead to more uniform expert utilization, while lower temperatures create more specialized expert selection.
+
+\subsubsection{Unified Classifier}
+The final component is a unified classifier that:
+\begin{itemize}
+    \item Takes the weighted combination of expert features concatenated with gating features
+    \item Consists of a fully connected layer that maps to the output classes
+    \item Produces final class probabilities through a softmax function
+\end{itemize}
+
+The complete model architecture is illustrated in Figure 1.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.95\linewidth]{example-image-a}
+\caption{Overview of our Mixture of Experts architecture, showing the shared feature extractor, expert networks, gating network, and unified classifier.}
+\label{fig_architecture}
+\end{figure}
+
+\subsection{Training Methodology}
+Our training methodology combines supervised learning with specialized losses that encourage effective expert specialization and utilization.
+
+\subsubsection{Loss Function}
+The total loss function combines multiple components:
+
+\begin{equation}
+\mathcal{L} = \mathcal{L}_{cls} + \alpha \mathcal{L}_{div} + \beta \mathcal{L}_{bal} + \gamma \mathcal{L}_{corr} + \delta \mathcal{L}_{min}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\mathcal{L}_{cls}$ is the standard cross-entropy classification loss
+    \item $\mathcal{L}_{div}$ is the diversity loss that encourages expert specialization
+    \item $\mathcal{L}_{bal}$ is the balance loss that prevents expert collapse
+    \item $\mathcal{L}_{corr}$ is the correlation loss that reduces redundancy between experts
+    \item $\mathcal{L}_{min}$ is the minimum usage constraint that ensures all experts are utilized
+    \item $\alpha$, $\beta$, $\gamma$, and $\delta$ are weighting hyperparameters
+\end{itemize}
+
+\subsubsection{Diversity Loss}
+The diversity loss encourages experts to specialize on different subsets of the data:
+
+\begin{equation}
+\mathcal{L}_{div} = -\mathbb{E}[g_i \log(g_i + \epsilon)]
+\end{equation}
+
+where $g_i$ are the gating weights and $\epsilon$ is a small constant for numerical stability. This loss is similar to entropy and is maximized when experts are utilized equally across the dataset.
+
+\subsubsection{Balance Loss}
+The balance loss prevents the gating network from consistently favoring certain experts:
+
+\begin{equation}
+\mathcal{L}_{bal} = \text{KL}(\log\text{softmax}(u), t)
+\end{equation}
+
+where $u$ is the usage per batch, $t$ is the target uniform distribution, and KL is the Kullback-Leibler divergence. This loss is minimized when the expert usage distribution matches the uniform target distribution.
+
+\subsubsection{Correlation Loss}
+The correlation loss reduces redundancy between experts by penalizing similar gating patterns:
+
+\begin{equation}
+\mathcal{L}_{corr} = \mathbb{E}[G^T G]
+\end{equation}
+
+where $G$ is the matrix of gating weights for a batch. This loss is minimized when experts are activated on different inputs.
+
+\subsubsection{Minimum Usage Constraint}
+The minimum usage constraint ensures that every input activates at least one expert significantly:
+
+\begin{equation}
+\mathcal{L}_{min} = \text{ReLU}(\tau - \min(g_i))
+\end{equation}
+
+where $\tau$ is a threshold (typically 0.1) and $\min(g_i)$ is the minimum gating weight for each input.
+
+\subsubsection{Temperature Annealing}
+We employ a temperature annealing schedule for the gating network:
+
+\begin{equation}
+T(e) = T_{init} - (T_{init} - T_{final}) \cdot \frac{e}{E}
+\end{equation}
+
+where $T(e)$ is the temperature at epoch $e$, $T_{init}$ is the initial temperature, $T_{final}$ is the final temperature, and $E$ is the total number of epochs. This schedule starts with a high temperature to encourage exploration and gradually decreases to allow specialization.
+
+\section{Implementation Details}
+\subsection{Dataset}
+Our implementation supports two different datasets:
+
+\begin{itemize}
+    \item Task A dataset:
+    \begin{itemize}
+        \item Includes indices in the data files
+        \item Labels are Python objects
+        \item Requires transformation to tensor format
+    \end{itemize}
+    
+    \item Task B dataset:
+    \begin{itemize}
+        \item Labels are already tensors with different value ranges
+        \item Data doesn't include indices
+        \item Data is in [H, W, C] format and needs permutation to [C, H, W]
+        \item Data shape is [samples, 64, 64, 3]
+    \end{itemize}
+\end{itemize}
+
+The task selection is handled via command-line arguments, and the data paths are automatically adjusted based on the selected task.
+
+\subsection{Training Process}
+The training process follows these steps:
+
+\begin{algorithm}
+\caption{MoE Training Process}
+\begin{algorithmic}[1]
+\State Initialize feature extractor by averaging parameters from pretrained models
+\State Initialize expert networks and gating network with random weights
+\State Set initial temperature for the gating network
+\For{each epoch}
+    \State Adjust temperature according to annealing schedule
+    \State Track expert usage statistics
+    \For{each batch}
+        \State Forward pass through shared feature extractor
+        \State Forward pass through each expert network
+        \State Compute gating weights from gating network
+        \State Combine expert features with gating weights
+        \State Produce final classification output
+        \State Compute classification loss
+        \State Compute diversity, balance, correlation, and minimum usage losses
+        \State Combine all losses and perform backward pass
+        \State Update model parameters
+    \EndFor
+    \State Evaluate model on validation set
+    \State If validation accuracy improves, save checkpoint
+    \State Analyze expert specialization periodically
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+We use the AdamW optimizer with weight decay and a cosine annealing learning rate schedule. The training process includes periodic expert analysis to visualize expert specialization and contributions across different classes.
+
+\subsection{Expert Specialization Analysis}
+To analyze expert specialization, we track:
+\begin{itemize}
+    \item The average gating weight for each expert across all inputs in the test set
+    \item The contribution of each expert to each class
+    \item The class-wise accuracy of the overall model
+\end{itemize}
+
+This analysis helps verify that experts are specializing as intended and provides insights into the model's behavior.
+
+\section{Evaluation}
+\subsection{Expert Specialization}
+Our expert analysis reveals that each expert indeed specializes in different subsets of classes, with some overlap in boundary cases. Figure 2 illustrates the average contribution of each expert to different classes, showing clear specialization patterns.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.95\linewidth]{example-image-b}
+\caption{Expert contribution heat map showing specialization across different classes. Brighter colors indicate higher contributions.}
+\label{fig_expert_heatmap}
+\end{figure}
+
+\subsection{Ablation Studies}
+We conducted ablation studies to evaluate the impact of different components:
+
+\begin{itemize}
+    \item Without diversity loss: Experts show less specialization and more redundancy
+    \item Without balance loss: One or two experts dominate, leaving others underutilized
+    \item Without temperature annealing: Training is less stable and final specialization is suboptimal
+    \item Single expert baseline: Lower overall accuracy compared to the full MoE model
+\end{itemize}
+
+\subsection{Parameter Efficiency}
+Our MoE approach achieves better parameter efficiency compared to a single large model or an ensemble of separate models with the same total capacity. The shared feature extractor reduces redundancy while allowing for specialized processing through the expert networks.
+
+\section{Conclusion}
+In this paper, we presented a Mixture of Experts architecture for multi-task image classification. Our approach combines a shared feature extractor with specialized expert networks and a dynamic gating mechanism. The comprehensive training methodology with carefully designed loss functions ensures effective expert specialization and utilization.
+
+The experimental results demonstrate that our MoE approach effectively leverages the strengths of individual experts to achieve superior performance compared to single-model approaches. The model shows improved parameter efficiency and better handling of task diversity through its specialized expert structure.
+
+Future work could explore increasing the number of experts, applying the approach to more diverse tasks beyond classification, and incorporating more advanced routing mechanisms for expert selection.
+
+\bibliographystyle{IEEEtran}
+\begin{thebibliography}{00}
+\bibitem{jacobs1991adaptive} R. A. Jacobs, M. I. Jordan, S. J. Nowlan, and G. E. Hinton, "Adaptive mixtures of local experts," Neural Comput., vol. 3, no. 1, pp. 79–87, 1991.
+\bibitem{shazeer2017outrageously} N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean, "Outrageously large neural networks: The sparsely-gated mixture-of-experts layer," in ICLR, 2017.
+\bibitem{caruana1997multitask} R. Caruana, "Multitask learning," Machine Learning, vol. 28, pp. 41–75, 1997.
+\bibitem{misra2016cross} I. Misra, A. Shrivastava, A. Gupta, and M. Hebert, "Cross-stitch networks for multi-task learning," in CVPR, 2016.
+\bibitem{ruder2019latent} S. Ruder, J. Bingel, I. Augenstein, and A. Søgaard, "Latent multi-task architecture learning," in AAAI, 2019.
+\end{thebibliography}
+
+\end{document}

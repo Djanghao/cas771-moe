@@ -13,7 +13,8 @@ import argparse
 
 # Import components from our custom modules
 from merge_model import MergedMoEModel
-from data_loader import load_all_datasets
+# from data_loader_dep import load_all_datasets ! deprecated
+from data_loader_dep import load_all_datasets
 from train import train_and_evaluate_moe, plot_learning_curve
 
 class CAS771Dataset(Dataset):
@@ -86,10 +87,14 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument("--seed", type=int, default=100, help="Random seed")
     parser.add_argument("--model_name", type=str, default="merged_moe", help="Model name")
-    parser.add_argument("--submodels_dir", type=str, default="./submodels/A", help="Directory containing pretrained submodels")
+    parser.add_argument("--submodels_dir", type=str, default="./submodels", help="Directory containing pretrained submodels")
     parser.add_argument("--expert_analysis_interval", type=int, default=10, 
                        help="Interval (in epochs) for saving expert analysis visualization (set to 0 to disable)")
-    
+    parser.add_argument("--load_model_path", type=str, default=None, 
+                       help="Path to a previously saved model checkpoint to load instead of using pretrained submodels")
+    parser.add_argument("--task", type=str, default='A', choices=['A', 'B'], 
+                        help="Task A or B")
+                        
     # MoE specific hyperparameters
     parser.add_argument("--diversity_weight", type=float, default=0.1, 
                        help="Controls diversity of expert specialization (range: 0.05-0.2)")
@@ -110,14 +115,28 @@ if __name__ == "__main__":
     os.makedirs("./runs", exist_ok=True)
     
     # Load all datasets combined (15 classes)
-    train_loader, test_loader, num_classes = load_all_datasets(batch_size=args.batch_size)
+    train_loader, test_loader, num_classes = load_all_datasets(batch_size=args.batch_size, task=args.task)
     print(f"Total classes: {num_classes}")
     
     # Create MergedMoE model with fixed number of experts (3)
     model = MergedMoEModel(num_classes=num_classes, num_experts=3)
     
-    # Load and merge pretrained models
-    model.load_pretrained_models(args.submodels_dir)
+    # Either load a specific previous model weight or use the pretrained submodels
+    if args.load_model_path and os.path.exists(args.load_model_path):
+        print(f"Loading model from checkpoint: {args.load_model_path}")
+        checkpoint = torch.load(args.load_model_path, map_location=torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
+        
+        # Check if the checkpoint contains model_state_dict or is a state_dict directly
+        if 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            model.load_state_dict(checkpoint)
+        print("Successfully loaded model from checkpoint")
+    else:
+        # Load and merge pretrained models
+        submodels_dir = os.path.join(args.submodels_dir, f"{args.task}")
+        print(f"Loading and merging pretrained submodels from: {submodels_dir}")
+        model.load_pretrained_models(submodels_dir)
     
     # Train model
     best_acc = train_and_evaluate_moe(
@@ -128,7 +147,7 @@ if __name__ == "__main__":
         lr=args.lr,
         weight_decay=args.weight_decay,
         patience=args.patience,
-        model_name=args.model_name,
+        model_name=args.model_name + "_" + args.task,
         expert_analysis_interval=args.expert_analysis_interval,
         diversity_weight=args.diversity_weight,
         balance_weight=args.balance_weight,
