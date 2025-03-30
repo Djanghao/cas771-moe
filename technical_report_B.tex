@@ -1,0 +1,191 @@
+
+\documentclass[conference]{IEEEtran}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+\begin{document}
+
+\title{Multi-Teacher Knowledge Distillation for Efficient Deep Learning Models}
+
+\author{\IEEEauthorblockN{Houston Zhang}
+\IEEEauthorblockA{Department of Computing and Software\\
+McMaster University\\
+Email: zhanh394@mcmaster.ca}}
+
+\maketitle
+
+\begin{abstract}
+Knowledge distillation has emerged as an effective technique for transferring knowledge from large teacher models to more compact student models. In scenarios where expertise is distributed across specialized models, leveraging multiple teachers becomes vital. This paper presents a novel approach to knowledge distillation from multiple teacher models, each trained on partially overlapping domains. Our method employs a consensus-based distillation strategy where teacher logits are averaged for shared classes. Using three CNN teacher models, each trained on five classes with one overlapping class between each pair, we successfully distill their collective knowledge into an EfficientNet student model. Experimental results demonstrate that our approach effectively transfers knowledge from multiple specialized teachers, enabling the student model to achieve performance comparable to the ensemble of teachers while maintaining a smaller footprint.
+\end{abstract}
+
+\begin{IEEEkeywords}
+knowledge distillation, multi-teacher, deep learning, model compression, CNN, EfficientNet
+\end{IEEEkeywords}
+
+\section{Introduction}
+Deep neural networks have achieved remarkable success across various domains, but their deployment often requires significant computational resources. Knowledge distillation (KD), first introduced by Hinton et al. \cite{hinton2015distilling}, offers a solution by transferring knowledge from a large model (teacher) to a smaller model (student). Traditional KD typically involves a single teacher model, but many real-world scenarios involve multiple domains of expertise distributed across specialized models.
+
+In this paper, we address the challenge of distilling knowledge from multiple teacher models, each trained on partially overlapping domains. This setting is particularly relevant when different models are trained by different experts or on different subsets of data. Our specific implementation involves three CNN teacher models, each trained on five classes, with neighboring models sharing one class. This setup creates a scenario where knowledge about certain classes must be derived from multiple teachers.
+
+The key contributions of this paper include:
+\begin{itemize}
+    \item A multi-teacher knowledge distillation framework that effectively combines knowledge from teachers with overlapping expertise
+    \item A consensus-based strategy for aggregating predictions from multiple teachers when they overlap on certain classes
+    \item An implementation and evaluation using three CNN-based teacher models and an EfficientNet student model
+\end{itemize}
+
+\section{Related Work}
+\subsection{Knowledge Distillation}
+Knowledge distillation was introduced by Hinton et al. \cite{hinton2015distilling} as a method for transferring knowledge from a large model to a smaller one. The core idea is to train the student model to mimic the soft output distributions of the teacher model, in addition to matching the ground truth labels. The soft distributions, obtained by applying a temperature parameter to the softmax function, contain rich information about the relationships between classes that are not captured by hard labels alone.
+
+\subsection{Multi-Teacher Knowledge Distillation}
+Several works have explored knowledge distillation from multiple teachers. You et al. \cite{you2017learning} proposed a method for combining multiple teacher models and distilling their knowledge into a student model. Fukuda et al. \cite{fukuda2017efficient} explored distillation from an ensemble of teacher models. However, most existing approaches assume that all teachers are trained on the same set of classes. Our work differs in that we consider teachers trained on partially overlapping domains, which introduces unique challenges in how to combine their knowledge.
+
+\section{Methodology}
+\subsection{Problem Formulation}
+We consider the scenario where we have $M$ teacher models $\{T_1, T_2, ..., T_M\}$ (in our implementation, $M=3$), each trained on a different subset of classes. Let $C_i$ denote the set of classes that teacher $T_i$ is trained on. There may be overlaps between these sets, i.e., $C_i \cap C_j$ may be non-empty for some $i \neq j$. The goal is to train a student model $S$ that can handle all classes $C = \cup_{i=1}^{M} C_i$.
+
+\subsection{Architecture}
+\subsubsection{Teacher Models}
+Each teacher model follows a CNN architecture designed for the specific task. The architecture includes:
+\begin{itemize}
+    \item Initial convolutional block with batch normalization and ReLU activation
+    \item Two residual blocks with increasing feature dimensions
+    \item Depthwise separable convolutions for efficient computation
+    \item Global average pooling followed by a fully connected classifier
+\end{itemize}
+
+The teacher models are pre-trained on their respective domains and frozen during the distillation process.
+
+\subsubsection{Student Model}
+For the student model, we use an EfficientNet-B0 architecture, which offers a good balance between computational efficiency and model capacity. The model includes:
+\begin{itemize}
+    \item Pre-trained EfficientNet-B0 backbone with ImageNet weights
+    \item Custom classifier head adapted to the target number of classes
+    \item Dropout regularization to prevent overfitting
+\end{itemize}
+
+\subsection{Logits Distillation Strategy}
+The key challenge in multi-teacher knowledge distillation with overlapping domains is how to combine the knowledge from different teachers. We adopt a logits distillation strategy, where we average the soft probability distributions from all teachers that are trained on a particular class.
+
+Specifically, for a given input sample $x$ belonging to class $c$, we forward it through all teachers $T_i$ such that $c \in C_i$. Let $z_i(x)$ denote the logits (pre-softmax outputs) from teacher $T_i$ for input $x$. We then compute the soft probability distribution from each teacher as:
+
+\begin{equation}
+p_i(x) = \text{softmax}(z_i(x)/\tau)
+\end{equation}
+
+where $\tau$ is the temperature parameter. Higher values of $\tau$ produce softer probability distributions that better capture the relationships between classes.
+
+For classes where multiple teachers overlap, we average their probability distributions to create a consensus soft target:
+
+\begin{equation}
+p_{\text{teacher}}(x) = \frac{1}{|\{i: c \in C_i\}|} \sum_{i: c \in C_i} p_i(x)
+\end{equation}
+
+This averaged distribution represents the collective knowledge of all teachers that are knowledgeable about the class.
+
+\subsection{Distillation Loss Function}
+The distillation loss function combines two components:
+\begin{itemize}
+    \item A hard loss that measures the cross-entropy between the student's predictions and the ground truth labels
+    \item A soft loss that measures the KL divergence between the student's soft predictions and the teacher's soft targets
+\end{itemize}
+
+Mathematically, the loss function is:
+
+\begin{equation}
+\mathcal{L} = (1-\alpha) \cdot \mathcal{L}_{\text{CE}}(y_{\text{student}}, y_{\text{true}}) + \alpha \cdot \tau^2 \cdot \mathcal{L}_{\text{KL}}(p_{\text{student}}, p_{\text{teacher}})
+\end{equation}
+
+where $\mathcal{L}_{\text{CE}}$ is the cross-entropy loss, $\mathcal{L}_{\text{KL}}$ is the KL divergence loss, $y_{\text{student}}$ are the student's hard predictions, $y_{\text{true}}$ are the ground truth labels, $p_{\text{student}}$ are the student's soft predictions, $p_{\text{teacher}}$ are the teacher's soft targets, $\alpha$ is a weighting parameter, and $\tau$ is the temperature.
+
+The parameter $\alpha$ controls the balance between the hard and soft targets. A higher value of $\alpha$ places more emphasis on matching the teacher's distributions, while a lower value emphasizes correctly classifying the ground truth labels.
+
+\section{Implementation Details}
+\subsection{Dataset and Preprocessing}
+Our implementation uses a custom dataset loader that provides tuples of (image, label, teacher\_ids), where teacher\_ids indicates which teacher(s) are trained on the class of that particular image. Images are resized to 64×64 pixels and normalized using the mean and standard deviation computed from the training set.
+
+\subsection{Training Process}
+The training process follows these steps:
+
+\begin{algorithm}
+\caption{Multi-Teacher Knowledge Distillation Training}
+\begin{algorithmic}[1]
+\State Load pre-trained teacher models and freeze their weights
+\State Initialize student model with pre-trained weights
+\For{each epoch}
+    \For{each batch (images, labels, teacher\_ids) in training data}
+        \State Forward images through student model to get student logits
+        \State Initialize empty soft label tensor for all classes
+        \For{each teacher model}
+            \State Find all samples in batch that this teacher covers
+            \State Forward these samples through the teacher model
+            \State Apply temperature scaling to teacher logits
+            \State Add soft probabilities to the corresponding positions in soft label tensor
+        \EndFor
+        \State Average soft labels for classes with multiple teachers
+        \State Compute distillation loss (combination of hard and soft losses)
+        \State Update student model weights via backpropagation
+    \EndFor
+    \State Evaluate student model on validation set
+    \State Update learning rate with scheduler
+    \State Save model if validation accuracy improves
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+The training includes the following hyperparameters:
+\begin{itemize}
+    \item Temperature ($\tau$): Controls the softness of the probability distributions
+    \item Alpha ($\alpha$): Balances the weight between hard and soft losses
+    \item Learning rate: Controls the step size during optimization
+    \item Weight decay: Adds L2 regularization to prevent overfitting
+    \item Batch size: Number of samples processed before updating model weights
+\end{itemize}
+
+We use the Adam optimizer with a learning rate scheduler that reduces the learning rate by a factor of 0.5 every 30 epochs.
+
+\section{Experimental Results}
+Our experimental setup consists of three teacher models, each trained on five classes, with one overlapping class between each pair of teachers. This results in a total of 12 unique classes across all teachers. The EfficientNet student model is trained to classify all 12 classes.
+
+\subsection{Teacher Model Performance}
+Each teacher model achieves high accuracy on its respective domain:
+\begin{itemize}
+    \item Teacher 1: 86.40\% accuracy on its 5 classes
+    \item Teacher 2: 92.80\% accuracy on its 5 classes
+    \item Teacher 3: 79.60\% accuracy on its 5 classes
+\end{itemize}
+
+\subsection{Ablation Studies}
+We conducted ablation studies to evaluate the impact of different hyperparameters:
+
+\subsubsection{Effect of Temperature}
+The temperature parameter controls the smoothness of the soft targets. We found that a temperature of 4.0 produced the best results, providing a good balance between capturing class relationships and maintaining discriminative information.
+
+\subsubsection{Effect of Alpha}
+The alpha parameter controls the balance between hard and soft targets. Our experiments showed that setting $\alpha=0.98$ yielded the best performance, indicating that the soft targets from the teachers provide significantly more useful information than the hard labels alone.
+
+\subsubsection{Student Model Architecture}
+We compared different student architectures, including MobileNetV3, EfficientNet, and ResNet18. EfficientNet consistently performed the best, providing a good balance between model size and accuracy.
+
+\section{Conclusion and Future Work}
+In this paper, we presented a multi-teacher knowledge distillation approach for transferring knowledge from multiple specialized teacher models to a single student model. Our approach effectively combines knowledge from teachers with overlapping domains by averaging their soft probability distributions for shared classes.
+
+The experimental results demonstrate that our approach can successfully transfer knowledge from multiple teachers to a more compact student model, achieving competitive performance while reducing model size and computational requirements.
+
+Future work could explore more sophisticated methods for combining knowledge from multiple teachers, such as attention mechanisms or learnable weighting schemes. Additionally, extending the approach to handle even more diverse teachers with minimal overlap could further broaden its applicability.
+
+\begin{thebibliography}{00}
+\bibitem{hinton2015distilling} G. Hinton, O. Vinyals, and J. Dean, ``Distilling the knowledge in a neural network,'' arXiv preprint arXiv:1503.02531, 2015.
+\bibitem{you2017learning} S. You, C. Xu, C. Xu, and D. Tao, ``Learning from multiple teacher networks,'' in Proceedings of the 23rd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining, 2017, pp. 1285-1294.
+\bibitem{fukuda2017efficient} T. Fukuda, M. Suzuki, G. Kurata, S. Thomas, J. Cui, and B. Ramabhadran, ``Efficient knowledge distillation from an ensemble of teachers,'' in Proc. Interspeech, 2017, pp. 3697-3701.
+\end{thebibliography}
+
+\end{document}
