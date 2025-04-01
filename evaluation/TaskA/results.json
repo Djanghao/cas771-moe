@@ -1,0 +1,20 @@
+{
+    "overall_accuracy": 74.53333333333333,
+    "class_accuracies": {
+        "palm": 83.0,
+        "oak": 74.0,
+        "pine": 62.0,
+        "willow": 59.0,
+        "maple": 50.0,
+        "lily": 63.0,
+        "daisy": 64.0,
+        "iris": 95.0,
+        "rose": 82.0,
+        "tulip": 77.0,
+        "orange": 87.0,
+        "apple": 82.0,
+        "banana": 87.0,
+        "strawberry": 75.0,
+        "pear": 78.0
+    }
+}

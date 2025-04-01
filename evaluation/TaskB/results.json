@@ -1,0 +1,17 @@
+{
+    "overall_accuracy": 67.73333333333333,
+    "class_accuracies": {
+        "class_0": 74.0,
+        "class_1": 64.0,
+        "class_2": 88.0,
+        "class_3": 72.0,
+        "class_4": 68.0,
+        "class_5": 52.0,
+        "class_6": 64.0,
+        "class_7": 44.0,
+        "class_8": 64.0,
+        "class_9": 58.0,
+        "class_10": 82.0,
+        "class_11": 82.0
+    }
+}
