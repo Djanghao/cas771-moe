@@ -1,0 +1,3 @@
+[submodule "moe-taska"]
+	path = moe-taska
+	url = ./
