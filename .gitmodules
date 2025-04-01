@@ -1,0 +1,3 @@
+[submodule "moe_task_a"]
+	path = moe_task_a
+	url = ./
