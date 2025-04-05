@@ -2,6 +2,32 @@
 
 This repository contains a training framework for Mixture of Experts (MoE) models designed for multi-task learning.
 
+## Quick Start: Model Evaluation
+
+To evaluate both Task A and Task B models and view the results:
+
+```bash
+python evaluation.py
+```
+
+This will:
+1. Run evaluation for both Task A and Task B models
+2. Display performance metrics including overall accuracy and per-class accuracy
+3. Show sample predictions with expert gate contributions
+4. Automatically open visualization images showing:
+   - Sample predictions with randomly selected classes
+   - Expert analysis showing specialization patterns
+
+The evaluation script randomly selects 10 classes for visualization to ensure diverse representation of model performance.
+
+### Sample Visualizations
+
+#### Task A: 
+![Task A Sample Predictions](evaluation/TaskA/sample_predictions.png)
+
+#### Task B
+![Task B Sample Predictions](evaluation/TaskB/sample_predictions.png)
+
 ## Features
 
 - Automatic experiment management with timestamped directories
