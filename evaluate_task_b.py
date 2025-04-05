@@ -216,6 +216,9 @@ def evaluate_model(model, test_loader, device):
     
     # Save samples for visualization
     test_samples = []
+    
+    # First pass to collect all available classes and samples
+    all_class_samples = {}
     samples_per_class = {}
     
     # Use no_grad for inference
@@ -231,33 +234,47 @@ def evaluate_model(model, test_loader, device):
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
             
-            # Update per-class accuracy
+            # Update per-class accuracy and collect samples by class
             for j in range(labels.size(0)):
                 label = labels[j].item()
                 if label not in class_correct:
                     class_correct[label] = 0
                     class_total[label] = 0
                     samples_per_class[label] = 0
+                    all_class_samples[label] = []
                 
                 class_total[label] += 1
                 if predicted[j] == label:
                     class_correct[label] += 1
                 
-                # Collect diverse samples (at most 2 per class)
-                if len(test_samples) < 10 and samples_per_class.get(label, 0) < 2:
-                    # Get the index of this sample in the dataset
-                    batch_idx = i * test_loader.batch_size + j
-                    if batch_idx < len(test_loader.original_data):
-                        # Get the original image data (not normalized)
-                        original_img = test_loader.original_data[batch_idx].cpu()
-                        
-                        test_samples.append((
-                            original_img,  # Use original image for visualization
-                            labels[j].item(),
-                            predicted[j].item(),
-                            gates[j].cpu()
-                        ))
-                        samples_per_class[label] = samples_per_class.get(label, 0) + 1
+                # Get the index of this sample in the dataset
+                batch_idx = i * test_loader.batch_size + j
+                if batch_idx < len(test_loader.original_data):
+                    # Get the original image data (not normalized)
+                    original_img = test_loader.original_data[batch_idx].cpu()
+                    
+                    # Store this sample for potential selection
+                    all_class_samples[label].append((
+                        original_img,  # Use original image for visualization
+                        label,
+                        predicted[j].item(),
+                        gates[j].cpu()
+                    ))
+    
+    # Now randomly select 10 classes (or fewer if there aren't 10 available)
+    import random
+    available_classes = list(all_class_samples.keys())
+    num_classes_to_select = min(10, len(available_classes))
+    selected_classes = random.sample(available_classes, num_classes_to_select)
+    
+    print(f"\nRandomly selected {num_classes_to_select} classes for visualization")
+    
+    # For each selected class, choose one random sample
+    for class_label in selected_classes:
+        if all_class_samples[class_label]:
+            # Randomly select one sample from this class
+            selected_sample = random.choice(all_class_samples[class_label])
+            test_samples.append(selected_sample)
     
     # Calculate overall accuracy
     accuracy = 100 * correct / total
