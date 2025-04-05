@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from moe_task_a.merge_model import MergedMoEModel
 from train import analyze_experts, plot_expert_analysis
-from moe_task_a.data_loader import load_data, CAS771Dataset
+from moe_task_a.data_loader import load_data, CAS771Dataset, calculate_normalization_stats
 
 def load_dataset(batch_size=64):
     """Load the TaskA dataset using the pre-saved .pth files
@@ -79,9 +79,15 @@ def load_dataset(batch_size=64):
     # Convert labels to tensors
     all_test_labels = torch.tensor(all_test_labels, dtype=torch.long)
     
-    # Calculate normalization stats (using the same values as in your data_loader.py)
-    mean = [0.485, 0.456, 0.406]  # Using standard ImageNet mean/std
-    std = [0.229, 0.224, 0.225]
+    # Calculate normalization stats directly from the dataset for consistency with training
+    # First create a temporary dataset and loader without normalization
+    temp_transform = transforms.Compose([transforms.ToTensor()])
+    temp_dataset = CAS771Dataset(all_test_data, all_test_labels, transform=temp_transform)
+    temp_loader = DataLoader(temp_dataset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
+    
+    # Calculate mean and std
+    mean, std = calculate_normalization_stats(temp_loader)
+    print(f"Calculated normalization stats - mean: {mean}, std: {std}")
     
     # Define transform
     transform = transforms.Compose([
@@ -129,10 +135,31 @@ def load_best_model(model_dir='best_models/TaskA', num_classes=15, num_experts=3
     
     # Load checkpoint
     checkpoint = torch.load(model_path, map_location='cpu')
-    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    # Check if model_state_dict exists in the checkpoint
+    if 'model_state_dict' in checkpoint:
+        # Standard loading method
+        model.load_state_dict(checkpoint['model_state_dict'])
+    else:
+        # Try loading the state dict directly
+        try:
+            model.load_state_dict(checkpoint)
+        except Exception as e:
+            print(f"Error loading direct state dict: {e}")
+            # This could be a complete model object instead of a state dict
+            if hasattr(checkpoint, 'state_dict'):
+                model.load_state_dict(checkpoint.state_dict())
     
     print(f"Loaded model from {model_path}")
-    print(f"Model's reported accuracy: {checkpoint.get('accuracy', 'N/A')}%")
+    # Extract accuracy from filename if not in checkpoint
+    if 'accuracy' not in checkpoint:
+        try:
+            accuracy = float(model_path.split('_')[-2])
+            print(f"Model's expected accuracy: {accuracy}%")
+        except:
+            print(f"Could not determine accuracy from filename")
+    else:
+        print(f"Model's reported accuracy: {checkpoint.get('accuracy', 'N/A')}%")
     
     return model, model_path
 
@@ -255,7 +282,7 @@ def display_results(accuracy, class_accuracies, test_samples, class_names, model
         # Convert tensor to numpy for visualization
         img = img.permute(1, 2, 0).numpy()
         
-        # Denormalize
+        # Denormalize to get original image
         mean = np.array([0.485, 0.456, 0.406])
         std = np.array([0.229, 0.224, 0.225])
         img = std * img + mean
@@ -292,7 +319,7 @@ def main():
     args = parser.parse_args()
     
     # Set device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps")
     print(f"Using device: {device}")
     
     # Load dataset
