@@ -39,18 +39,53 @@ def load_dataset(batch_size=64):
     # First pass: collect all unique labels across all datasets
     all_unique_labels = set()
     
+    print("\nLabel names for each model subset:")
     for model_id in [1, 2, 3]:
         test_data_path = data_paths[model_id]
         _, test_labels, _ = load_data(test_data_path, task='B')
         unique_labels = sorted(set(test_labels))
+        print(f"Model {model_id} labels: {unique_labels}")
         all_unique_labels.update(unique_labels)
     
     # Create a global mapping for all unique labels
     all_unique_labels = sorted(list(all_unique_labels))
     global_label_map = {orig_label: new_label for new_label, orig_label in enumerate(all_unique_labels)}
     
-    # Get class names (using indices as placeholders since we don't have actual names)
-    class_names = [f"class_{i}" for i in range(len(all_unique_labels))]
+    # Map the original labels to their proper class names
+    # Using the information provided by the user
+    label_to_classname = {
+        # Subset 1: Mammal
+        173: "Chihuahua",
+        137: "baboon",
+        34: "hyena",
+        159: "Arctic_fox",
+        201: "lynx",
+        
+        # Subset 2: African Animal
+        # 34: "hyena" (already included above)
+        202: "African_hunting_dog",
+        80: "zebra",
+        135: "patas",
+        24: "African_elephant",
+        
+        # Subset 3: Canidae
+        # 173: "Chihuahua" (already included above)
+        # 202: "African_hunting_dog" (already included above)
+        130: "boxer",
+        124: "collie",
+        125: "golden_retriever"
+    }
+    
+    # Create class names using the mapping
+    class_names = [label_to_classname[label] for label in all_unique_labels]
+    
+    print("\nMapping numeric labels to class names:")
+    for i, (label, name) in enumerate(zip(all_unique_labels, class_names)):
+        print(f"Class {i}: Label {label} -> {name}")
+    
+    print("\nFinal class names:")
+    for i, name in enumerate(class_names):
+        print(f"Class {i}: {name}")
     
     # Second pass: load and remap labels using the global mapping
     for model_id in [1, 2, 3]:
@@ -84,9 +119,15 @@ def load_dataset(batch_size=64):
         transforms.Normalize(mean=mean, std=std)
     ])
     
-    # Create dataset and dataloader
+    # Store the original data for visualization
+    original_test_data = all_test_data.clone()
+    
+    # Create dataset and dataloader with normalized data for the model
     test_dataset = CAS771Dataset(all_test_data, all_test_labels, transform=transform)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
+    
+    # Add the original data to the test_loader for access during evaluation
+    test_loader.original_data = original_test_data
     
     print(f"Test set: {len(test_dataset)} images")
     print(f"Classes: {class_names}")
@@ -161,7 +202,7 @@ def evaluate_model(model, test_loader, device):
     Returns:
         accuracy: Overall accuracy on test set
         class_accuracies: Per-class accuracies
-        test_samples: List of (input, true_label, predicted_label, expert_gates) tuples
+        test_samples: List of (original_img, input, true_label, predicted_label, expert_gates) tuples
     """
     model.eval()
     model = model.to(device)
@@ -175,6 +216,7 @@ def evaluate_model(model, test_loader, device):
     
     # Save samples for visualization
     test_samples = []
+    samples_per_class = {}
     
     # Use no_grad for inference
     with torch.no_grad():
@@ -195,21 +237,27 @@ def evaluate_model(model, test_loader, device):
                 if label not in class_correct:
                     class_correct[label] = 0
                     class_total[label] = 0
+                    samples_per_class[label] = 0
                 
                 class_total[label] += 1
                 if predicted[j] == label:
                     class_correct[label] += 1
-            
-            # Save first 10 samples from each batch if we need more
-            if len(test_samples) < 10:
-                for j in range(min(10, labels.size(0))):
-                    if len(test_samples) < 10:
+                
+                # Collect diverse samples (at most 2 per class)
+                if len(test_samples) < 10 and samples_per_class.get(label, 0) < 2:
+                    # Get the index of this sample in the dataset
+                    batch_idx = i * test_loader.batch_size + j
+                    if batch_idx < len(test_loader.original_data):
+                        # Get the original image data (not normalized)
+                        original_img = test_loader.original_data[batch_idx].cpu()
+                        
                         test_samples.append((
-                            inputs[j].cpu(),
+                            original_img,  # Use original image for visualization
                             labels[j].item(),
                             predicted[j].item(),
                             gates[j].cpu()
                         ))
+                        samples_per_class[label] = samples_per_class.get(label, 0) + 1
     
     # Calculate overall accuracy
     accuracy = 100 * correct / total
@@ -252,13 +300,12 @@ def display_results(accuracy, class_accuracies, test_samples, class_names, model
     
     for i, (img, true_label, pred_label, gates) in enumerate(test_samples):
         # Convert tensor to numpy for visualization
+        # For evaluation samples, we need to undo the normalization
         img = img.numpy().transpose(1, 2, 0)
         
-        # Denormalize
-        mean = np.array([0.485, 0.456, 0.406])
-        std = np.array([0.229, 0.224, 0.225])
-        img = std * img + mean
-        img = np.clip(img, 0, 1)
+        # Directly display the image as uint8 without normalization
+        # This matches how test_b.py displays images
+        img = img.astype(np.uint8)
         
         # Plot image
         axs[i].imshow(img)
@@ -269,7 +316,7 @@ def display_results(accuracy, class_accuracies, test_samples, class_names, model
         
         # Set title with prediction result
         correct = "✓" if true_label == pred_label else "✗"
-        axs[i].set_title(f"{true_class} → {pred_class} {correct}")
+        axs[i].set_title(f"True: {true_class}\nPredicted: {pred_class}")
         axs[i].axis('off')
         
         # Print expert gates

@@ -1,17 +1,17 @@
 {
     "overall_accuracy": 67.73333333333333,
     "class_accuracies": {
-        "class_0": 74.0,
-        "class_1": 64.0,
-        "class_2": 88.0,
-        "class_3": 72.0,
-        "class_4": 68.0,
-        "class_5": 52.0,
-        "class_6": 64.0,
-        "class_7": 44.0,
-        "class_8": 64.0,
-        "class_9": 58.0,
-        "class_10": 82.0,
-        "class_11": 82.0
+        "African_elephant": 74.0,
+        "hyena": 64.0,
+        "zebra": 88.0,
+        "collie": 72.0,
+        "golden_retriever": 68.0,
+        "boxer": 52.0,
+        "patas": 64.0,
+        "baboon": 44.0,
+        "Arctic_fox": 64.0,
+        "Chihuahua": 58.0,
+        "lynx": 82.0,
+        "African_hunting_dog": 82.0
     }
 }
