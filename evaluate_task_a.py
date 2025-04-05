@@ -218,56 +218,54 @@ def display_results(accuracy, class_accuracies, test_samples, class_names, model
         class_names: Names of the classes
         model: The model
     """
-    print(f"\nOverall Accuracy: {accuracy:.2f}%")
+    # Print overall accuracy
+    print(f"\nOverall Accuracy: {accuracy:.2f}%\n")
     
-    print("\nPer-class Accuracy:")
+    # Print per-class accuracy
+    print("Per-class Accuracy:")
     for label, acc in sorted(class_accuracies.items()):
-        class_name = class_names[label] if label < len(class_names) else f"Class {label}"
+        class_name = class_names[label] if label < len(class_names) else f"Unknown ({label})"
         print(f"  {class_name}: {acc:.2f}%")
     
-    # Display test samples
+    # Visualize sample predictions
     print("\nTest Samples with Predictions:")
     print("==============================")
     
-    plt.figure(figsize=(12, 12))
-    for i, (img, label, pred, gates) in enumerate(test_samples):
-        # Convert tensor to image
+    # Create a figure to display sample predictions
+    fig, axs = plt.subplots(2, 5, figsize=(15, 6))
+    axs = axs.flatten()
+    
+    for i, (img, true_label, pred_label, gates) in enumerate(test_samples):
+        # Convert tensor to numpy for visualization
         img = img.permute(1, 2, 0).numpy()
+        
         # Denormalize
-        img = img * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
+        mean = np.array([0.485, 0.456, 0.406])
+        std = np.array([0.229, 0.224, 0.225])
+        img = std * img + mean
         img = np.clip(img, 0, 1)
         
+        # Plot image
+        axs[i].imshow(img)
+        
         # Get class names
-        true_class = class_names[label] if label < len(class_names) else f"Class {label}"
-        pred_class = class_names[pred] if pred < len(class_names) else f"Class {pred}"
-        status = "✓" if label == pred else "✗"
+        true_class = class_names[true_label] if true_label < len(class_names) else f"Class {true_label}"
+        pred_class = class_names[pred_label] if pred_label < len(class_names) else f"Class {pred_label}"
         
-        # Display gates
-        gates_str = ", ".join([f"E{i+1}: {g:.2f}" for i, g in enumerate(gates)])
+        # Set title with prediction result
+        correct = "✓" if true_label == pred_label else "✗"
+        axs[i].set_title(f"True: {true_class}\nPredicted: {pred_class}")
+        axs[i].axis('off')
         
-        # Plot
-        plt.subplot(4, 3, i + 1)
-        plt.imshow(img)
-        plt.title(f"{true_class} → {pred_class} {status}")
-        plt.xlabel(f"Gates: {gates_str}")
-        plt.xticks([])
-        plt.yticks([])
+        # Print expert gates
+        print(f"Sample {i+1}: {true_class} → {pred_class} {correct}")
+        for j in range(len(gates)):
+            print(f"  Expert {j+1}: {gates[j]:.4f}")
     
     plt.tight_layout()
     sample_predictions_path = os.path.join(output_dir, "sample_predictions.png")
     plt.savefig(sample_predictions_path)
     print(f"Sample predictions saved to {sample_predictions_path}")
-    
-    # Print information about expert gates for the samples
-    print("\nExpert Gates for Test Samples:")
-    for i, (_, label, pred, gates) in enumerate(test_samples):
-        true_class = class_names[label] if label < len(class_names) else f"Class {label}"
-        pred_class = class_names[pred] if pred < len(class_names) else f"Class {pred}"
-        status = "✓" if label == pred else "✗"
-        
-        print(f"Sample {i+1}: {true_class} → {pred_class} {status}")
-        for j, gate in enumerate(gates):
-            print(f"  Expert {j+1}: {gate:.4f}")
 
 def main():
     parser = argparse.ArgumentParser(description='Evaluate Mixture of Experts model')
