@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from merge_model import MergedMoEModel
 from train import analyze_experts, plot_expert_analysis
-from data_loader_dep import load_data, CAS771Dataset
+from data_loader_dep import load_data, CAS771Dataset, calculate_normalization_stats
 
 def load_dataset(batch_size=64):
     """Load the TaskB dataset using the pre-saved .pth files
@@ -109,9 +109,15 @@ def load_dataset(batch_size=64):
     # Convert labels to tensors
     all_test_labels = torch.tensor(all_test_labels, dtype=torch.long)
     
-    # Calculate normalization stats
-    mean = [0.485, 0.456, 0.406]  # Using standard ImageNet mean/std
-    std = [0.229, 0.224, 0.225]
+    # Calculate normalization stats directly from the dataset for consistency with training
+    # First create a temporary dataset and loader without normalization
+    temp_transform = transforms.Compose([transforms.ToTensor()])
+    temp_dataset = CAS771Dataset(all_test_data, all_test_labels, transform=temp_transform)
+    temp_loader = DataLoader(temp_dataset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
+    
+    # Calculate mean and std
+    mean, std = calculate_normalization_stats(temp_loader)
+    print(f"Calculated normalization stats - mean: {mean}, std: {std}")
     
     # Define transform
     transform = transforms.Compose([
@@ -181,13 +187,32 @@ def load_best_model(model_dir='best_models/TaskB', num_classes=None, num_experts
     model = MergedMoEModel(num_classes=num_classes, num_experts=num_experts)
     
     # Load model state
-    if 'model_state_dict' in checkpoint:
-        model.load_state_dict(checkpoint['model_state_dict'])
-    else:
-        model.load_state_dict(checkpoint)
+    try:
+        if 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            # Try loading the state dict directly
+            try:
+                model.load_state_dict(checkpoint)
+            except Exception as e:
+                print(f"Error loading direct state dict: {e}")
+                # This could be a complete model object instead of a state dict
+                if hasattr(checkpoint, 'state_dict'):
+                    model.load_state_dict(checkpoint.state_dict())
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        raise
     
     print(f"Loaded model from {model_path}")
-    print(f"Model's reported accuracy: {checkpoint.get('accuracy', 'N/A')}%")
+    # Extract accuracy from filename if not in checkpoint
+    if 'accuracy' not in checkpoint:
+        try:
+            accuracy = float(model_path.split('_')[-2])
+            print(f"Model's expected accuracy: {accuracy}%")
+        except:
+            print(f"Could not determine accuracy from filename")
+    else:
+        print(f"Model's reported accuracy: {checkpoint.get('accuracy', 'N/A')}%")
     
     return model, model_path
 
@@ -349,9 +374,7 @@ def display_results(accuracy, class_accuracies, test_samples, class_names, model
     # Perform expert analysis
     print("\nPerforming detailed expert analysis...")
     expert_class_accuracy, expert_avg_contributions = analyze_experts(model, test_loader, device=device, num_classes=len(class_names))
-    
-    # The analyze_experts function already prints the analysis, so we don't need to duplicate it here
-    
+        
     # Save results to JSON
     results_path = os.path.join(output_dir, "results.json")
     with open(results_path, 'w') as f:
