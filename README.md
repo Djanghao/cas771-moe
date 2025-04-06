@@ -2,7 +2,34 @@
 
 This repository contains a training framework for Mixture of Experts (MoE) models designed for multi-task learning.
 
+## Download Required Resources
+
+Before running the evaluation, download the model and data files:
+
+```bash
+# Download best models
+gdown --fuzzy https://drive.google.com/file/d/1GQmdfksDEUIoxiJAMBYRZ-oZw0Pa0F8c/view\?usp\=drive_link
+
+# Download data
+gdown --fuzzy https://drive.google.com/file/d/12KVxl9n577vwoZ1WPn6U70jD37_UA0y-/view?usp=drive_link
+
+# Extract downloaded files
+unzip *.zip -d .
+```
+
+Alternatively, run the provided download script:
+
+```bash
+python download_resources.py
+```
+
 ## Quick Start: Model Evaluation
+
+- First download the best models folder for both Task A and Task B from the Google Drive link provided in the README. 
+  
+```
+gdown https://drive.google.com/file/d/1GQmdfksDEUIoxiJAMBYRZ-oZw0Pa0F8c/view\?usp\=drive_link --fuzzy
+```
 
 To evaluate both Task A and Task B models and view the results:
 
