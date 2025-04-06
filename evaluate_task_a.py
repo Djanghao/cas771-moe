@@ -39,9 +39,9 @@ def load_dataset(batch_size=64):
     
     # We'll collect class info for each model subset
     model_class_names = {
-        1: ["pine", "oak", "palm", "willow", "maple"],  # trees
-        2: ["rose", "tulip", "daisy", "iris", "lily"],  # flowers
-        3: ["apple", "orange", "banana", "strawberry", "pear"]  # fruits/veg
+        1: ["maple_tree", "oak_tree", "palm_tree", "pine_tree", "willow"],  # trees
+        2: ["orchid", "poppy", "rose", "sunflower", "tulip"],  # flowers
+        3: ["apple", "mushroom", "orange", "pear", "sweet_pepper"]  # fruits/veg
     }
     
     # Load and process each dataset
