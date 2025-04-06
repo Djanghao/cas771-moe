@@ -2,6 +2,24 @@
 import os
 import subprocess
 import time
+import platform
+
+def open_file(filepath):
+    """
+    Open a file with the default application in a cross-platform way.
+    """
+    system = platform.system()
+    try:
+        if system == 'Darwin':  # macOS
+            subprocess.Popen(['open', filepath])
+        elif system == 'Windows':  # Windows
+            os.startfile(filepath)
+        elif system == 'Linux':  # Linux
+            subprocess.Popen(['xdg-open', filepath])
+        else:
+            print(f"Unsupported platform: {system}. Cannot open file automatically.")
+    except Exception as e:
+        print(f"Error opening file {filepath}: {e}")
 
 def run_evaluation():
     """
@@ -24,11 +42,11 @@ def run_evaluation():
     
     if os.path.exists(task_a_sample_predictions):
         print(f"\nOpening {task_a_sample_predictions}...")
-        subprocess.Popen(["open", task_a_sample_predictions])
+        open_file(task_a_sample_predictions)
     
     if os.path.exists(task_a_expert_analysis):
         print(f"Opening {task_a_expert_analysis}...")
-        subprocess.Popen(["open", task_a_expert_analysis])
+        open_file(task_a_expert_analysis)
     
     # Wait a moment before starting Task B
     time.sleep(2)
@@ -49,11 +67,11 @@ def run_evaluation():
     
     if os.path.exists(task_b_sample_predictions):
         print(f"\nOpening {task_b_sample_predictions}...")
-        subprocess.Popen(["open", task_b_sample_predictions])
+        open_file(task_b_sample_predictions)
     
     if os.path.exists(task_b_expert_analysis):
         print(f"Opening {task_b_expert_analysis}...")
-        subprocess.Popen(["open", task_b_expert_analysis])
+        open_file(task_b_expert_analysis)
     
     print("\n" + "=" * 50)
     print("Evaluation complete!")
