@@ -6,7 +6,7 @@ This repository contains a training framework for Mixture of Experts (MoE) model
 
 ``` bash
 # Clone the project
-git clone git@github.com:Djanghao/cas771-moe.git
+git clone https://github.com/Djanghao/cas771-moe.git
 
 # Change the directory to the root
 cd cas771-moe
