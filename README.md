@@ -2,6 +2,35 @@
 
 This repository contains a training framework for Mixture of Experts (MoE) models designed for multi-task learning.
 
+## Clone the Project
+
+``` bash
+# Clone the project
+git clone https://github.com/Djanghao/cas771-moe.git
+
+# Change the directory to the root
+cd cas771-moe
+
+# Initialize submodules
+git submodule update --init --recursive
+```
+
+## Download Required Resources
+
+Before running the evaluation, download the model and data files:
+
+```bash
+# Download best models
+gdown --fuzzy https://drive.google.com/file/d/1GQmdfksDEUIoxiJAMBYRZ-oZw0Pa0F8c/view?usp=sharing
+
+# Download data
+gdown --fuzzy https://drive.google.com/file/d/12KVxl9n577vwoZ1WPn6U70jD37_UA0y-/view?usp=sharing
+
+
+# Extract downloaded files
+for file in *.zip; do unzip "$file"; done && find . -type d -name "__MACOSX" -exec rm -rf {} \; 2>/dev/null
+```
+
 ## Quick Start: Model Evaluation
 
 To evaluate both Task A and Task B models and view the results:
